@@ -1,3 +1,4 @@
 # sushi-api
 
-Backend services for Sushi Platform.
+Backend services and API Gateway for Sushi Platform.
+Built with NestJS (Multi-App Monorepo).
