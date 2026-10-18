@@ -126,4 +126,117 @@ export class AuthService {
     });
     return { accessToken, refreshToken };
   }
+
+  async getProfile(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        role: true,
+        branchId: true,
+        isActive: true,
+        createdAt: true,
+      },
+    });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+    return user;
+  }
+
+  async refreshToken(rawRefreshToken: string) {
+    if (!rawRefreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    let payload: any;
+    try {
+      const jwtRefreshSecret =
+        this.configService.get<string>('JWT_REFRESH_SECRET');
+      payload = this.jwtService.verify(rawRefreshToken, {
+        secret: jwtRefreshSecret,
+      });
+    } catch {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const userId = payload.sub;
+
+    const userTokens = await this.prisma.refreshToken.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let matchedTokenRecord: any = null;
+    for (const record of userTokens) {
+      const isMatch = await bcrypt.compare(rawRefreshToken, record.tokenHash);
+      if (isMatch) {
+        matchedTokenRecord = record;
+        break;
+      }
+    }
+
+    if (!matchedTokenRecord) {
+      throw new UnauthorizedException('Refresh token not found or invalid');
+    }
+
+    if (matchedTokenRecord.revokedAt) {
+      await this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException('Refresh token has been revoked');
+    }
+
+    if (new Date() > matchedTokenRecord.expiresAt) {
+      throw new UnauthorizedException('Refresh token has expired');
+    }
+
+    await this.prisma.refreshToken.update({
+      where: { id: matchedTokenRecord.id },
+      data: { revokedAt: new Date() },
+    });
+
+    const user = await this.getProfile(userId);
+    const newTokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.branchId,
+    );
+
+    return {
+      user,
+      tokens: newTokens,
+    };
+  }
+
+  async revokeToken(rawRefreshToken?: string) {
+    if (!rawRefreshToken) return;
+
+    try {
+      const jwtRefreshSecret =
+        this.configService.get<string>('JWT_REFRESH_SECRET');
+      const payload = this.jwtService.verify(rawRefreshToken, {
+        secret: jwtRefreshSecret,
+      });
+
+      const userTokens = await this.prisma.refreshToken.findMany({
+        where: { userId: payload.sub, revokedAt: null },
+      });
+
+      for (const record of userTokens) {
+        if (await bcrypt.compare(rawRefreshToken, record.tokenHash)) {
+          await this.prisma.refreshToken.update({
+            where: { id: record.id },
+            data: { revokedAt: new Date() },
+          });
+          break;
+        }
+      }
+    } catch {}
+  }
 }
