@@ -24,6 +24,8 @@ async function bootstrap() {
   const jwtService = new JwtService();
   const identityServiceUrl =
     process.env.IDENTITY_SERVICE_URL || 'http://localhost:3001';
+  const catalogServiceUrl =
+    process.env.CATALOG_SERVICE_URL || 'http://localhost:3002';
 
   // 3. Reverse Proxy: /api/auth/* -> http://localhost:3001/auth/*
   app.use(
@@ -35,6 +37,38 @@ async function bootstrap() {
       on: {
         proxyReq: (proxyReq, req: any) => {
           // Re-stream body nếu đã bị Express/NestJS body-parser đọc
+          fixRequestBody(proxyReq, req);
+
+          let token = req.headers.authorization?.replace('Bearer ', '');
+          if (!token && req.cookies) {
+            token = req.cookies['access_token'];
+          }
+
+          if (token) {
+            try {
+              const payload = jwtService.verify(token, {
+                secret: process.env.JWT_SECRET,
+              });
+              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
+              if (payload?.role) proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.branchId)
+                proxyReq.setHeader('x-user-branch-id', payload.branchId);
+            } catch {}
+          }
+        },
+      },
+    }),
+  );
+
+  // 4. Reverse Proxy: /api/catalog/* -> http://localhost:3002/catalog/*
+  app.use(
+    '/api/catalog',
+    createProxyMiddleware({
+      target: catalogServiceUrl,
+      changeOrigin: true,
+      pathRewrite: (path) => `/catalog${path}`,
+      on: {
+        proxyReq: (proxyReq, req: any) => {
           fixRequestBody(proxyReq, req);
 
           let token = req.headers.authorization?.replace('Bearer ', '');

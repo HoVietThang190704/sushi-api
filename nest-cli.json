@@ -19,6 +19,15 @@
         "tsConfigPath": "apps/api-gateway/tsconfig.app.json"
       }
     },
+    "catalog-service": {
+      "type": "application",
+      "root": "apps/catalog-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/catalog-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/catalog-service/tsconfig.app.json"
+      }
+    },
     "identity-service": {
       "type": "application",
       "root": "apps/identity-service",
