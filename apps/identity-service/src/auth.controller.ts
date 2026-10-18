@@ -62,7 +62,6 @@ export class AuthController {
     @Body('refreshToken') bodyToken: string,
     @Res({ passthrough: true }) response: Response,
   ) {
-    // Ưu tiên đọc từ Cookie (Web), nếu không có thì đọc từ Body (Mobile)
     const bearerToken = request.headers.authorization?.replace('Bearer ', '');
     const refreshToken = request.cookies?.['refresh_token'] || bodyToken || bearerToken;
 
