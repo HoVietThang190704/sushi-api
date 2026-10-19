@@ -152,7 +152,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token is required');
     }
 
-    let payload: any;
+    let payload: { sub: string; email: string; role: string; branchId?: string | null };
     try {
       const jwtRefreshSecret =
         this.configService.get<string>('JWT_REFRESH_SECRET');
@@ -170,7 +170,7 @@ export class AuthService {
       orderBy: { createdAt: 'desc' },
     });
 
-    let matchedTokenRecord: any = null;
+    let matchedTokenRecord: (typeof userTokens)[number] | null = null;
     for (const record of userTokens) {
       const isMatch = await bcrypt.compare(rawRefreshToken, record.tokenHash);
       if (isMatch) {

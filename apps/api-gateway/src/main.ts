@@ -3,6 +3,11 @@ import { AppModule } from './app.module';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import cookieParser from 'cookie-parser';
 import { JwtService } from '@nestjs/jwt';
+import type { Request } from 'express';
+
+interface AuthenticatedRequest extends Request {
+  cookies: Record<string, string>;
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -35,13 +40,14 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/auth${path}`,
       on: {
-        proxyReq: (proxyReq, req: any) => {
+        proxyReq: (proxyReq, req) => {
+          const customReq = req as AuthenticatedRequest;
           // Re-stream body nếu đã bị Express/NestJS body-parser đọc
           fixRequestBody(proxyReq, req);
 
-          let token = req.headers.authorization?.replace('Bearer ', '');
-          if (!token && req.cookies) {
-            token = req.cookies['access_token'];
+          let token = customReq.headers.authorization?.replace('Bearer ', '');
+          if (!token && customReq.cookies) {
+            token = customReq.cookies['access_token'];
           }
 
           if (token) {
@@ -68,12 +74,13 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/catalog${path}`,
       on: {
-        proxyReq: (proxyReq, req: any) => {
+        proxyReq: (proxyReq, req) => {
+          const customReq = req as AuthenticatedRequest;
           fixRequestBody(proxyReq, req);
 
-          let token = req.headers.authorization?.replace('Bearer ', '');
-          if (!token && req.cookies) {
-            token = req.cookies['access_token'];
+          let token = customReq.headers.authorization?.replace('Bearer ', '');
+          if (!token && customReq.cookies) {
+            token = customReq.cookies['access_token'];
           }
 
           if (token) {
