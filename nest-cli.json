@@ -36,6 +36,12 @@
       "compilerOptions": {
         "tsConfigPath": "apps/identity-service/tsconfig.app.json"
       }
+    },
+    "common": {
+      "type": "library",
+      "root": "libs/common",
+      "entryFile": "index",
+      "sourceRoot": "libs/common/src"
     }
   }
 }

@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { CatalogServiceModule } from './catalog-service.module';
+import { TransformResponseInterceptor, AllExceptionsFilter } from '@common';
 
 async function bootstrap() {
   const app = await NestFactory.create(CatalogServiceModule);
@@ -12,6 +13,9 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  app.useGlobalInterceptors(new TransformResponseInterceptor());
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   const port = process.env.CATALOG_SERVICE_PORT || 3002;
   await app.listen(port);
