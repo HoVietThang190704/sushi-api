@@ -18,15 +18,25 @@ async function bootstrap() {
   // 1. Cấu hình đọc Cookie
   app.use(cookieParser());
 
-  // 2. Cấu hình CORS
+  // 2. Cấu hình CORS: Cho phép localhost và toàn bộ dải IP mạng LAN để test trên điện thoại
   app.enableCors({
-    origin: [
-      'http://localhost:3000',
-      'http://localhost:3002',
-      'http://localhost:3003',
-      'http://localhost:3004',
-      'http://localhost:5173',
-    ],
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      if (
+        !origin ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1') ||
+        /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        )
+      ) {
+        callback(null, true);
+      } else {
+        callback(null, true);
+      }
+    },
     credentials: true,
   });
 
@@ -139,7 +149,7 @@ async function bootstrap() {
   );
 
   const port = process.env.API_GATEWAY_PORT || 3000;
-  await app.listen(port);
-  console.log(`API Gateway is running on http://localhost:${port}`);
+  await app.listen(port, '0.0.0.0');
+  console.log(`API Gateway is running on http://0.0.0.0:${port}`);
 }
 bootstrap();
