@@ -1,10 +1,13 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 import { CatalogServiceModule } from './catalog-service.module';
 import { TransformResponseInterceptor, AllExceptionsFilter } from '@common';
 
 async function bootstrap() {
   const app = await NestFactory.create(CatalogServiceModule);
+
+  app.use(cookieParser());
 
   app.useGlobalPipes(
     new ValidationPipe({
