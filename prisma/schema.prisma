@@ -6,7 +6,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["identity", "catalog"]
+  schemas  = ["identity", "catalog", "inventory"]
 }
 
 // ==========================================
@@ -108,4 +108,61 @@ model ComboItem {
   @@id([comboId, childProductId])
   @@map("combo_items")
   @@schema("catalog")
+}
+
+// ==========================================
+// SCHEMA: inventory
+// ==========================================
+
+enum TransactionType {
+  IN
+  OUT
+
+  @@schema("inventory")
+}
+
+enum TransactionReason {
+  INITIAL_STOCK
+  PURCHASE
+  KITCHEN_USAGE
+  DISCARD_WASTE
+  ADJUSTMENT
+
+  @@schema("inventory")
+}
+
+model Ingredient {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique @db.VarChar(50)
+  name         String   @db.VarChar(160)
+  unit         String   @db.VarChar(30)
+  currentStock Decimal  @default(0) @map("current_stock") @db.Decimal(18, 3)
+  minStock     Decimal  @default(0) @map("min_stock") @db.Decimal(18, 3)
+  costPrice    Decimal  @default(0) @map("cost_price") @db.Decimal(18, 2)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  transactions InventoryTransaction[]
+
+  @@map("ingredients")
+  @@schema("inventory")
+}
+
+model InventoryTransaction {
+  id           String            @id @default(uuid()) @db.Uuid
+  code         String            @unique @db.VarChar(50)
+  type         TransactionType
+  reason       TransactionReason @default(PURCHASE)
+  ingredientId String            @map("ingredient_id") @db.Uuid
+  ingredient   Ingredient        @relation(fields: [ingredientId], references: [id])
+  quantity     Decimal           @db.Decimal(18, 3)
+  unitPrice    Decimal           @default(0) @map("unit_price") @db.Decimal(18, 2)
+  totalAmount  Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  note         String?           @db.Text
+  createdBy    String?           @map("created_by")
+  createdAt    DateTime          @default(now()) @map("created_at")
+
+  @@map("inventory_transactions")
+  @@schema("inventory")
 }
