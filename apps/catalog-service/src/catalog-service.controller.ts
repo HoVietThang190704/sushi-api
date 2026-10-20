@@ -6,16 +6,33 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CatalogServiceService } from './catalog-service.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { RolesGuard } from './guards/roles.guard';
 import { Roles } from './guards/roles.decorator';
+import { CloudinaryService } from '@common';
 
 @Controller('catalog')
 export class CatalogServiceController {
-  constructor(private readonly catalogService: CatalogServiceService) {}
+  constructor(
+    private readonly catalogService: CatalogServiceService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
+
+  // ==========================================
+  // Image Upload (Cloudinary)
+  // ==========================================
+
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadImage(@UploadedFile() file: Express.Multer.File) {
+    return this.cloudinaryService.uploadImage(file);
+  }
 
   // ==========================================
   // Categories

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from './prisma.service';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
@@ -58,7 +62,8 @@ export class InventoryService {
       throw new BadRequestException(`Mã nguyên liệu "${dto.code}" đã tồn tại!`);
     }
 
-    const initialQty = dto.initialStock && dto.initialStock > 0 ? dto.initialStock : 0;
+    const initialQty =
+      dto.initialStock && dto.initialStock > 0 ? dto.initialStock : 0;
 
     return this.prisma.$transaction(async (tx) => {
       const ingredient = await tx.ingredient.create({
@@ -97,7 +102,9 @@ export class InventoryService {
       where: { id: dto.ingredientId },
     });
     if (!ingredient) {
-      throw new NotFoundException(`Không tìm thấy nguyên liệu có ID "${dto.ingredientId}"`);
+      throw new NotFoundException(
+        `Không tìm thấy nguyên liệu có ID "${dto.ingredientId}"`,
+      );
     }
 
     const currentStock = Number(ingredient.currentStock);
@@ -109,7 +116,10 @@ export class InventoryService {
       );
     }
 
-    const unitPrice = dto.unitPrice !== undefined ? Number(dto.unitPrice) : Number(ingredient.costPrice);
+    const unitPrice =
+      dto.unitPrice !== undefined
+        ? Number(dto.unitPrice)
+        : Number(ingredient.costPrice);
     const totalAmount = qty * unitPrice;
     const code = this.generateCode(dto.type);
 
