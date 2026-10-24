@@ -51,6 +51,12 @@
       "root": "libs/common",
       "entryFile": "index",
       "sourceRoot": "libs/common/src"
+    },
+    "contracts": {
+      "type": "library",
+      "root": "libs/contracts",
+      "entryFile": "index",
+      "sourceRoot": "libs/contracts/src"
     }
   }
 }

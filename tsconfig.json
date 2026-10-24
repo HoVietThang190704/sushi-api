@@ -23,7 +23,11 @@
     "noFallthroughCasesInSwitch": true,
     "paths": {
       "@common": ["libs/common/src"],
-      "@common/*": ["libs/common/src/*"]
+      "@common/*": ["libs/common/src/*"],
+      "@contracts": ["libs/contracts/src"],
+      "@contracts/*": ["libs/contracts/src/*"],
+      "@libs/contracts": ["libs/contracts/src"],
+      "@libs/contracts/*": ["libs/contracts/src/*"]
     }
   }
 }

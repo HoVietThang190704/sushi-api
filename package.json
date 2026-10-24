@@ -96,7 +96,16 @@
     "coverageDirectory": "./coverage",
     "testEnvironment": "node",
     "roots": [
-      "<rootDir>/apps/"
-    ]
+      "<rootDir>/apps/",
+      "<rootDir>/libs/"
+    ],
+    "moduleNameMapper": {
+      "^@common$": "<rootDir>/libs/common/src",
+      "^@common/(.*)$": "<rootDir>/libs/common/src/$1",
+      "^@contracts$": "<rootDir>/libs/contracts/src",
+      "^@contracts/(.*)$": "<rootDir>/libs/contracts/src/$1",
+      "^@libs/contracts$": "<rootDir>/libs/contracts/src",
+      "^@libs/contracts/(.*)$": "<rootDir>/libs/contracts/src/$1"
+    }
   }
 }
