@@ -6,6 +6,7 @@ import { CatalogServiceService } from './catalog-service.service';
 import { PrismaService } from './prisma.service';
 import { RolesGuard } from './guards/roles.guard';
 import { CloudinaryService } from '@common';
+import { RabbitMQModule } from '@common/rabbitmq';
 
 @Module({
   imports: [
@@ -14,9 +15,20 @@ import { CloudinaryService } from '@common';
       envFilePath: ['.env', 'apps/api/.env'],
     }),
     JwtModule.register({}),
+    RabbitMQModule,
   ],
   controllers: [CatalogServiceController],
-  providers: [CatalogServiceService, PrismaService, RolesGuard, CloudinaryService],
-  exports: [CatalogServiceService, PrismaService, RolesGuard, CloudinaryService],
+  providers: [
+    CatalogServiceService,
+    PrismaService,
+    RolesGuard,
+    CloudinaryService,
+  ],
+  exports: [
+    CatalogServiceService,
+    PrismaService,
+    RolesGuard,
+    CloudinaryService,
+  ],
 })
 export class CatalogServiceModule {}

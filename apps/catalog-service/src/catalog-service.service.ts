@@ -7,10 +7,15 @@ import { PrismaService } from './prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { Prisma } from '@prisma/client';
+import { RabbitMQService } from '@common/rabbitmq';
+import { createRealtimeEvent } from '@contracts';
 
 @Injectable()
 export class CatalogServiceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rabbitmqService: RabbitMQService,
+  ) {}
 
   // 1. Quản lý Danh mục (Categories)
   async createCategory(dto: CreateCategoryDto) {
@@ -23,7 +28,7 @@ export class CatalogServiceService {
       }
     }
 
-    return this.prisma.productCategory.create({
+    const category = await this.prisma.productCategory.create({
       data: {
         name: dto.name,
         parentId: dto.parentId,
@@ -32,6 +37,21 @@ export class CatalogServiceService {
         parent: true,
       },
     });
+
+    await this.rabbitmqService.publishEvent(
+      createRealtimeEvent({
+        type: 'catalog.category.created',
+        resource: 'catalog',
+        action: 'CREATED',
+        payload: {
+          id: category.id,
+          name: category.name,
+          parentId: category.parentId,
+        },
+      }),
+    );
+
+    return category;
   }
 
   async getCategories() {
@@ -67,7 +87,7 @@ export class CatalogServiceService {
       }
     }
 
-    return this.prisma.product.create({
+    const product = await this.prisma.product.create({
       data: {
         sku: dto.sku.toUpperCase(),
         barcode: dto.barcode,
@@ -81,6 +101,22 @@ export class CatalogServiceService {
         category: true,
       },
     });
+
+    await this.rabbitmqService.publishEvent(
+      createRealtimeEvent({
+        type: 'catalog.product.created',
+        resource: 'catalog',
+        action: 'CREATED',
+        payload: {
+          id: product.id,
+          sku: product.sku,
+          name: product.name,
+          categoryId: product.categoryId,
+        },
+      }),
+    );
+
+    return product;
   }
 
   async getProducts(categoryId?: string) {

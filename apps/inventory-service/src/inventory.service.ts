@@ -8,10 +8,15 @@ import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
 import { TransactionType, TransactionReason, Prisma } from '@prisma/client';
+import { RabbitMQService } from '@common/rabbitmq';
+import { createRealtimeEvent } from '@contracts';
 
 @Injectable()
 export class InventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rabbitmqService: RabbitMQService,
+  ) {}
 
   private generateCode(type: TransactionType): string {
     const prefix = type === TransactionType.IN ? 'PNK' : 'PXK';
@@ -65,7 +70,7 @@ export class InventoryService {
     const initialQty =
       dto.initialStock && dto.initialStock > 0 ? dto.initialStock : 0;
 
-    return this.prisma.$transaction(async (tx) => {
+    const ingredient = await this.prisma.$transaction(async (tx) => {
       const ingredient = await tx.ingredient.create({
         data: {
           code: dto.code.trim().toUpperCase(),
@@ -95,6 +100,21 @@ export class InventoryService {
 
       return ingredient;
     });
+
+    await this.rabbitmqService.publishEvent(
+      createRealtimeEvent({
+        type: 'inventory.ingredient.created',
+        resource: 'inventory',
+        action: 'CREATED',
+        payload: {
+          id: ingredient.id,
+          code: ingredient.code,
+          name: ingredient.name,
+        },
+      }),
+    );
+
+    return ingredient;
   }
 
   async createTransaction(dto: CreateTransactionDto) {
@@ -123,7 +143,7 @@ export class InventoryService {
     const totalAmount = qty * unitPrice;
     const code = this.generateCode(dto.type);
 
-    return this.prisma.$transaction(async (tx) => {
+    const transaction = await this.prisma.$transaction(async (tx) => {
       const transaction = await tx.inventoryTransaction.create({
         data: {
           code,
@@ -153,6 +173,22 @@ export class InventoryService {
 
       return transaction;
     });
+
+    await this.rabbitmqService.publishEvent(
+      createRealtimeEvent({
+        type: 'inventory.stock.updated',
+        resource: 'inventory',
+        action: 'UPDATED',
+        payload: {
+          code: transaction.code,
+          ingredientId: dto.ingredientId,
+          type: dto.type,
+          quantity: qty,
+        },
+      }),
+    );
+
+    return transaction;
   }
 
   async getTransactions(query: TransactionQueryDto) {
