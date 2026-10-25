@@ -42,7 +42,8 @@ describe('RealtimeGateway', () => {
         id: 'socket-1',
         handshake: {
           headers: {
-            cookie: 'other_cookie=xyz; access_token=valid-jwt-token; theme=dark',
+            cookie:
+              'other_cookie=xyz; access_token=valid-jwt-token; theme=dark',
           },
           auth: {},
         },
@@ -98,7 +99,9 @@ describe('RealtimeGateway', () => {
       expect(mockClient.data.user).toEqual(userPayload);
       expect(mockClient.join).toHaveBeenCalledWith('role:ADMIN');
       expect(mockClient.join).toHaveBeenCalledWith('authenticated');
-      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringContaining('branch:'));
+      expect(mockClient.join).not.toHaveBeenCalledWith(
+        expect.stringContaining('branch:'),
+      );
       expect(mockClient.disconnect).not.toHaveBeenCalled();
     });
 

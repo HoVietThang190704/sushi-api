@@ -81,7 +81,12 @@ describe('Realtime Events Contracts', () => {
     });
 
     it('should correctly support all RealtimeResource types', () => {
-      const resources: RealtimeResource[] = ['inventory', 'catalog', 'order', 'identity'];
+      const resources: RealtimeResource[] = [
+        'inventory',
+        'catalog',
+        'order',
+        'identity',
+      ];
       resources.forEach((resource) => {
         const event = createRealtimeEvent({
           type: `${resource}.test`,

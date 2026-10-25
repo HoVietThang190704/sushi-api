@@ -11,21 +11,24 @@ import { RealtimeDomainEvent } from '@contracts';
 
 function parseCookies(cookieHeader?: string): Record<string, string> {
   if (!cookieHeader) return {};
-  return cookieHeader.split(';').reduce((acc, str) => {
-    const trimmed = str.trim();
-    if (!trimmed) return acc;
-    const index = trimmed.indexOf('=');
-    if (index > 0) {
-      const key = trimmed.slice(0, index).trim();
-      const val = trimmed.slice(index + 1).trim();
-      try {
-        acc[key] = decodeURIComponent(val);
-      } catch {
-        acc[key] = val;
+  return cookieHeader.split(';').reduce(
+    (acc, str) => {
+      const trimmed = str.trim();
+      if (!trimmed) return acc;
+      const index = trimmed.indexOf('=');
+      if (index > 0) {
+        const key = trimmed.slice(0, index).trim();
+        const val = trimmed.slice(index + 1).trim();
+        try {
+          acc[key] = decodeURIComponent(val);
+        } catch {
+          acc[key] = val;
+        }
       }
-    }
-    return acc;
-  }, {} as Record<string, string>);
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
 }
 
 export interface AuthenticatedUserPayload {
@@ -73,7 +76,9 @@ export class RealtimeGateway
     // 3. From handshake authorization header
     const authHeader = client.handshake.headers?.authorization;
     if (authHeader) {
-      return String(authHeader).replace(/^Bearer\s+/i, '').trim();
+      return String(authHeader)
+        .replace(/^Bearer\s+/i, '')
+        .trim();
     }
 
     return undefined;

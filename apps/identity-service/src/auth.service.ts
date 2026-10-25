@@ -152,7 +152,12 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token is required');
     }
 
-    let payload: { sub: string; email: string; role: string; branchId?: string | null };
+    let payload: {
+      sub: string;
+      email: string;
+      role: string;
+      branchId?: string | null;
+    };
     try {
       const jwtRefreshSecret =
         this.configService.get<string>('JWT_REFRESH_SECRET');

@@ -11,7 +11,9 @@ describe('IdentityServiceController', () => {
       providers: [IdentityServiceService],
     }).compile();
 
-    identityServiceController = app.get<IdentityServiceController>(IdentityServiceController);
+    identityServiceController = app.get<IdentityServiceController>(
+      IdentityServiceController,
+    );
   });
 
   describe('root', () => {

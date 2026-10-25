@@ -38,7 +38,9 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
 
       this.connection.on('close', () => {
         if (!this.isDestroyed) {
-          this.logger.warn('RabbitMQ connection closed. Attempting reconnect...');
+          this.logger.warn(
+            'RabbitMQ connection closed. Attempting reconnect...',
+          );
         }
         this.channel = null;
         this.connection = null;
@@ -80,7 +82,9 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Failed to connect to RabbitMQ for realtime consumer: ${message}`);
+      this.logger.warn(
+        `Failed to connect to RabbitMQ for realtime consumer: ${message}`,
+      );
       this.channel = null;
       this.connection = null;
     }
@@ -92,7 +96,9 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
       const event = JSON.parse(content) as RealtimeDomainEvent;
 
       if (!event || !event.type) {
-        this.logger.warn('Received invalid realtime event payload from RabbitMQ');
+        this.logger.warn(
+          'Received invalid realtime event payload from RabbitMQ',
+        );
         this.channel?.ack(msg);
         return;
       }
@@ -101,7 +107,9 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
       this.channel?.ack(msg);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Error processing realtime RabbitMQ message: ${message}`);
+      this.logger.error(
+        `Error processing realtime RabbitMQ message: ${message}`,
+      );
       // Ack to avoid poison message clogging the queue
       this.channel?.ack(msg);
     }

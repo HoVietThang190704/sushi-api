@@ -72,7 +72,8 @@ async function bootstrap() {
                 secret: process.env.JWT_SECRET,
               });
               if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role) proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.role)
+                proxyReq.setHeader('x-user-role', payload.role);
               if (payload?.branchId)
                 proxyReq.setHeader('x-user-branch-id', payload.branchId);
             } catch {}
@@ -105,7 +106,8 @@ async function bootstrap() {
                 secret: process.env.JWT_SECRET,
               });
               if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role) proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.role)
+                proxyReq.setHeader('x-user-role', payload.role);
               if (payload?.branchId)
                 proxyReq.setHeader('x-user-branch-id', payload.branchId);
             } catch {}
@@ -138,7 +140,8 @@ async function bootstrap() {
                 secret: process.env.JWT_SECRET,
               });
               if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role) proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.role)
+                proxyReq.setHeader('x-user-role', payload.role);
               if (payload?.branchId)
                 proxyReq.setHeader('x-user-branch-id', payload.branchId);
             } catch {}

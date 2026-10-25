@@ -22,7 +22,9 @@ export class CloudinaryService {
 
     // Kiểm tra định dạng hình ảnh
     if (!file.mimetype.startsWith('image/')) {
-      throw new BadRequestException('Chỉ chấp nhận file hình ảnh (PNG, JPG, WEBP, GIF, JPEG)');
+      throw new BadRequestException(
+        'Chỉ chấp nhận file hình ảnh (PNG, JPG, WEBP, GIF, JPEG)',
+      );
     }
 
     // Giới hạn kích thước file 5MB
@@ -40,7 +42,9 @@ export class CloudinaryService {
         (error, result: UploadApiResponse | undefined) => {
           if (error || !result) {
             return reject(
-              new BadRequestException(error?.message || 'Tải ảnh lên Cloudinary thất bại'),
+              new BadRequestException(
+                error?.message || 'Tải ảnh lên Cloudinary thất bại',
+              ),
             );
           }
           resolve({

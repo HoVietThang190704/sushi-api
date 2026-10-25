@@ -63,7 +63,8 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const bearerToken = request.headers.authorization?.replace('Bearer ', '');
-    const refreshToken = request.cookies?.['refresh_token'] || bodyToken || bearerToken;
+    const refreshToken =
+      request.cookies?.['refresh_token'] || bodyToken || bearerToken;
 
     const result = await this.authService.refreshToken(refreshToken);
 
