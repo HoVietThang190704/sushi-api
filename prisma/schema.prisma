@@ -149,6 +149,31 @@ model Ingredient {
   @@schema("inventory")
 }
 
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+
+  @@schema("inventory")
+}
+
+model OutboxEvent {
+  id            String       @id @default(uuid()) @db.Uuid
+  aggregateType String       @map("aggregate_type") @db.VarChar(60)
+  aggregateId   String       @map("aggregate_id") @db.VarChar(100)
+  eventType     String       @map("event_type") @db.VarChar(100)
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  retryCount    Int          @default(0) @map("retry_count")
+  lastError     String?      @map("last_error") @db.Text
+  createdAt     DateTime     @default(now()) @map("created_at")
+  publishedAt   DateTime?    @map("published_at")
+
+  @@index([status, createdAt])
+  @@map("outbox_events")
+  @@schema("inventory")
+}
+
 model InventoryTransaction {
   id           String            @id @default(uuid()) @db.Uuid
   code         String            @unique @db.VarChar(50)
