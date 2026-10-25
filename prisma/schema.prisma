@@ -6,7 +6,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-  schemas  = ["identity", "catalog", "inventory"]
+  schemas  = ["identity", "catalog", "inventory", "ordering"]
 }
 
 // ==========================================
@@ -190,4 +190,85 @@ model InventoryTransaction {
 
   @@map("inventory_transactions")
   @@schema("inventory")
+}
+
+// ==========================================
+// SCHEMA: ordering
+// ==========================================
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY_FOR_PICKUP
+  COMPLETED
+  CANCELLED
+
+  @@schema("ordering")
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+
+  @@schema("ordering")
+}
+
+model Order {
+  id               String        @id @default(uuid()) @db.Uuid
+  code             String        @unique @db.VarChar(50)
+  branchId         String        @map("branch_id") @db.Uuid
+  customerName     String        @map("customer_name") @db.VarChar(120)
+  customerPhone    String        @map("customer_phone") @db.VarChar(30)
+  customerEmail    String?       @map("customer_email") @db.VarChar(255)
+  address          String?       @db.Text
+  province         String?       @db.VarChar(100)
+  district         String?       @db.VarChar(100)
+  ward             String?       @db.VarChar(100)
+  note             String?       @db.Text
+  status           OrderStatus   @default(PENDING)
+  paymentStatus    PaymentStatus @default(UNPAID) @map("payment_status")
+  paymentMethod    String        @default("CASH") @map("payment_method") @db.VarChar(30)
+  totalAmount      Decimal       @map("total_amount") @db.Decimal(18, 2)
+  idempotencyKey   String?       @unique @map("idempotency_key") @db.VarChar(100)
+  accessTokenHash  String        @map("access_token_hash") @db.VarChar(64)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  items            OrderItem[]
+  statusHistories  OrderStatusHistory[]
+
+  @@index([customerPhone])
+  @@index([status, createdAt])
+  @@map("orders")
+  @@schema("ordering")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderId     String   @map("order_id") @db.Uuid
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String   @map("product_id") @db.Uuid
+  productName String   @map("product_name") @db.VarChar(160)
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(18, 2)
+  quantity    Int
+  subtotal    Decimal  @db.Decimal(18, 2)
+
+  @@map("order_items")
+  @@schema("ordering")
+}
+
+model OrderStatusHistory {
+  id         String       @id @default(uuid()) @db.Uuid
+  orderId    String       @map("order_id") @db.Uuid
+  order      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  reason     String?      @db.Text
+  changedBy  String       @default("SYSTEM") @map("changed_by")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@map("order_status_histories")
+  @@schema("ordering")
 }
