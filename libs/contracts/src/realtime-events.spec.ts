@@ -115,5 +115,27 @@ describe('Realtime Events Contracts', () => {
       expect(contractsFromAlias.REALTIME_EXCHANGE).toBe('sushi.events');
       expect(typeof contractsFromAlias.createRealtimeEvent).toBe('function');
     });
+
+    it('should construct order events with order status transitions', () => {
+      const orderPayload = {
+        orderId: 'uuid-ord-1',
+        orderCode: 'ORD-20261025-001',
+        status: 'CONFIRMED',
+        totalAmount: 250000,
+      };
+
+      const event = createRealtimeEvent({
+        type: 'order.status.updated',
+        resource: 'order',
+        action: 'UPDATED',
+        branchId: 'branch-1',
+        payload: orderPayload,
+      });
+
+      expect(event.resource).toBe('order');
+      expect(event.type).toBe('order.status.updated');
+      expect(event.payload.orderCode).toBe('ORD-20261025-001');
+      expect(event.payload.status).toBe('CONFIRMED');
+    });
   });
 });
