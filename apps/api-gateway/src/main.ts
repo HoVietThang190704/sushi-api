@@ -47,6 +47,8 @@ async function bootstrap() {
     process.env.CATALOG_SERVICE_URL || 'http://localhost:3002';
   const inventoryServiceUrl =
     process.env.INVENTORY_SERVICE_URL || 'http://localhost:3003';
+  const orderingServiceUrl =
+    process.env.ORDERING_SERVICE_URL || 'http://localhost:3004';
 
   // 3. Reverse Proxy: /api/auth/* -> http://localhost:3001/auth/*
   app.use(
@@ -124,6 +126,40 @@ async function bootstrap() {
       target: inventoryServiceUrl,
       changeOrigin: true,
       pathRewrite: (path) => `/inventory${path}`,
+      on: {
+        proxyReq: (proxyReq, req) => {
+          const customReq = req as AuthenticatedRequest;
+          fixRequestBody(proxyReq, req);
+
+          let token = customReq.headers.authorization?.replace('Bearer ', '');
+          if (!token && customReq.cookies) {
+            token = customReq.cookies['access_token'];
+          }
+
+          if (token) {
+            try {
+              const payload = jwtService.verify(token, {
+                secret: process.env.JWT_SECRET,
+              });
+              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
+              if (payload?.role)
+                proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.branchId)
+                proxyReq.setHeader('x-user-branch-id', payload.branchId);
+            } catch {}
+          }
+        },
+      },
+    }),
+  );
+
+  // 6. Reverse Proxy: /api/orders/* -> http://localhost:3004/orders/*
+  app.use(
+    '/api/orders',
+    createProxyMiddleware({
+      target: orderingServiceUrl,
+      changeOrigin: true,
+      pathRewrite: (path) => `/orders${path}`,
       on: {
         proxyReq: (proxyReq, req) => {
           const customReq = req as AuthenticatedRequest;
