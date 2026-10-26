@@ -46,6 +46,15 @@
         "tsConfigPath": "apps/inventory-service/tsconfig.app.json"
       }
     },
+    "ordering-service": {
+      "type": "application",
+      "root": "apps/ordering-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/ordering-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/ordering-service/tsconfig.app.json"
+      }
+    },
     "common": {
       "type": "library",
       "root": "libs/common",
