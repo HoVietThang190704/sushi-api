@@ -1,8 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { OrderingService } from './ordering.service';
 import { PrismaService } from './prisma.service';
 import { RabbitMQService } from '@common/rabbitmq';
+import { createHash } from 'crypto';
 
 describe('OrderingService - createOrder', () => {
   let service: OrderingService;
@@ -168,5 +173,72 @@ describe('OrderingService - createOrder', () => {
         action: 'CREATED',
       }),
     );
+  });
+
+  describe('trackOrder', () => {
+    it('should throw NotFoundException if order does not exist', async () => {
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(null);
+
+      await expect(
+        service.trackOrder('ORD-NOT-FOUND', 'any-token'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw UnauthorizedException if secret token hash does not match', async () => {
+      const order = {
+        id: 'ord-1',
+        code: 'ORD-20261025-1111',
+        accessTokenHash: createHash('sha256').update('real-token').digest('hex'),
+        items: [],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+
+      await expect(
+        service.trackOrder('ORD-20261025-1111', 'wrong-token'),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should return sanitized order details when code and token match', async () => {
+      const token = 'correct-secret-token-123';
+      const accessTokenHash = createHash('sha256').update(token).digest('hex');
+
+      const mockOrder = {
+        id: 'ord-1',
+        code: 'ORD-20261025-1111',
+        customerName: 'Nguyen Van A',
+        customerPhone: '0901234567',
+        status: 'PENDING',
+        paymentStatus: 'UNPAID',
+        totalAmount: 150000,
+        accessTokenHash,
+        items: [
+          {
+            id: 'item-1',
+            productName: 'Sake Sushi',
+            unitPrice: 50000,
+            quantity: 3,
+            subtotal: 150000,
+          },
+        ],
+        statusHistories: [
+          {
+            fromStatus: null,
+            toStatus: 'PENDING',
+            createdAt: new Date(),
+          },
+        ],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(mockOrder as any);
+
+      const result = await service.trackOrder('ORD-20261025-1111', token);
+
+      expect(result.code).toBe('ORD-20261025-1111');
+      expect(result.status).toBe('PENDING');
+      expect(result.items.length).toBe(1);
+      // Access token hash must NOT be returned in tracking result
+      expect((result as any).accessTokenHash).toBeUndefined();
+    });
   });
 });

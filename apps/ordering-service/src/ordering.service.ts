@@ -1,6 +1,8 @@
 import {
   Injectable,
   BadRequestException,
+  NotFoundException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
@@ -174,5 +176,35 @@ export class OrderingService {
       trackingToken: rawTrackingToken,
       isDuplicate: false,
     };
+  }
+
+  async trackOrder(code: string, token: string) {
+    if (!code || !token) {
+      throw new BadRequestException('Mã đơn hàng và mã truy cập là bắt buộc');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { code },
+      include: {
+        items: true,
+        statusHistories: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng với mã "${code}"`);
+    }
+
+    const expectedHash = this.hashSecretToken(token);
+    if (order.accessTokenHash !== expectedHash) {
+      throw new UnauthorizedException('Mã truy cập theo dõi đơn hàng không chính xác');
+    }
+
+    // Sanitize order output: remove internal token hash
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { accessTokenHash: _, ...sanitizedOrder } = order;
+    return sanitizedOrder;
   }
 }
