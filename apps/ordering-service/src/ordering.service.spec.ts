@@ -7,6 +7,7 @@ import {
 import { OrderingService } from './ordering.service';
 import { PrismaService } from './prisma.service';
 import { RabbitMQService } from '@common/rabbitmq';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { createHash } from 'crypto';
 
 describe('OrderingService - createOrder', () => {
@@ -239,6 +240,141 @@ describe('OrderingService - createOrder', () => {
       expect(result.items.length).toBe(1);
       // Access token hash must NOT be returned in tracking result
       expect((result as any).accessTokenHash).toBeUndefined();
+    });
+  });
+
+  describe('updateOrderStatus & cancelOrderByCustomer', () => {
+    it('should allow customer to cancel order when status is PENDING', async () => {
+      const token = 'token-cancel-1';
+      const order = {
+        id: 'ord-pending',
+        code: 'ORD-PENDING-01',
+        status: OrderStatus.PENDING,
+        branchId: 'branch-1',
+        accessTokenHash: createHash('sha256').update(token).digest('hex'),
+      };
+
+      const updatedOrder = {
+        ...order,
+        status: OrderStatus.CANCELLED,
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          order: {
+            update: jest.fn().mockResolvedValue(updatedOrder),
+          },
+          orderStatusHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'hist-cancel' }),
+          },
+        });
+      });
+
+      const result = await service.cancelOrderByCustomer(
+        'ORD-PENDING-01',
+        token,
+        'Doi y khong muon an nua',
+      );
+
+      expect(result.status).toBe(OrderStatus.CANCELLED);
+      expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'order.status.updated',
+          payload: expect.objectContaining({
+            status: OrderStatus.CANCELLED,
+          }),
+        }),
+      );
+    });
+
+    it('should reject customer cancellation if order is already PREPARING', async () => {
+      const token = 'token-cancel-2';
+      const order = {
+        id: 'ord-prep',
+        code: 'ORD-PREPARING-01',
+        status: OrderStatus.PREPARING,
+        accessTokenHash: createHash('sha256').update(token).digest('hex'),
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+
+      await expect(
+        service.cancelOrderByCustomer('ORD-PREPARING-01', token),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should update order status by staff and record audit history', async () => {
+      const order = {
+        id: 'ord-staff-1',
+        code: 'ORD-STAFF-01',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+      };
+
+      const updatedOrder = {
+        ...order,
+        status: OrderStatus.PREPARING,
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          order: {
+            update: jest.fn().mockResolvedValue(updatedOrder),
+          },
+          orderStatusHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'hist-staff' }),
+          },
+        });
+      });
+
+      const result = await service.updateOrderStatus(
+        'ord-staff-1',
+        OrderStatus.PREPARING,
+        'Bep bat dau lam',
+        'CHEF_01',
+      );
+
+      expect(result.status).toBe(OrderStatus.PREPARING);
+      expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'order.status.updated',
+          payload: expect.objectContaining({
+            orderId: 'ord-staff-1',
+            status: OrderStatus.PREPARING,
+          }),
+        }),
+      );
+    });
+
+    it('should update payment status to PAID by cashier', async () => {
+      const order = {
+        id: 'ord-pay-1',
+        code: 'ORD-PAY-01',
+        paymentStatus: PaymentStatus.UNPAID,
+        branchId: 'branch-1',
+      };
+
+      const updatedOrder = {
+        ...order,
+        paymentStatus: PaymentStatus.PAID,
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.order, 'update').mockResolvedValue(updatedOrder as any);
+
+      const result = await service.updatePaymentStatus(
+        'ord-pay-1',
+        PaymentStatus.PAID,
+      );
+
+      expect(result.paymentStatus).toBe(PaymentStatus.PAID);
+      expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'order.payment.updated',
+        }),
+      );
     });
   });
 });

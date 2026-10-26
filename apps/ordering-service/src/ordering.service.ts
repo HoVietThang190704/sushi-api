@@ -207,4 +207,194 @@ export class OrderingService {
     const { accessTokenHash: _, ...sanitizedOrder } = order;
     return sanitizedOrder;
   }
+
+  async cancelOrderByCustomer(code: string, token: string, reason?: string) {
+    if (!code || !token) {
+      throw new BadRequestException('Mã đơn hàng và mã truy cập là bắt buộc');
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { code },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng với mã "${code}"`);
+    }
+
+    const expectedHash = this.hashSecretToken(token);
+    if (order.accessTokenHash !== expectedHash) {
+      throw new UnauthorizedException('Mã truy cập theo dõi đơn hàng không chính xác');
+    }
+
+    if (
+      order.status !== OrderStatus.PENDING &&
+      order.status !== OrderStatus.CONFIRMED
+    ) {
+      throw new BadRequestException(
+        `Đơn hàng đang ở trạng thái "${order.status}", không thể tự hủy. Vui lòng liên hệ nhà hàng.`,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const cancelledOrder = await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: OrderStatus.CANCELLED,
+        },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: order.id,
+          fromStatus: order.status,
+          toStatus: OrderStatus.CANCELLED,
+          reason: reason || 'Khách hàng tự hủy đơn',
+          changedBy: 'CUSTOMER',
+        },
+      });
+
+      return cancelledOrder;
+    });
+
+    try {
+      await this.rabbitmqService.publishEvent(
+        createRealtimeEvent({
+          type: 'order.status.updated',
+          resource: 'order',
+          action: 'UPDATED',
+          branchId: updated.branchId,
+          payload: {
+            orderId: updated.id,
+            orderCode: updated.code,
+            status: updated.status,
+            reason: reason || 'Khách hàng tự hủy đơn',
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to publish order.status.updated event: ${message}`);
+    }
+
+    return updated;
+  }
+
+  async updateOrderStatus(
+    orderId: string,
+    toStatus: OrderStatus,
+    reason?: string,
+    changedBy = 'STAFF',
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng có ID "${orderId}"`);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: toStatus,
+        },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          fromStatus: order.status,
+          toStatus,
+          reason,
+          changedBy,
+        },
+      });
+
+      return updatedOrder;
+    });
+
+    try {
+      await this.rabbitmqService.publishEvent(
+        createRealtimeEvent({
+          type: 'order.status.updated',
+          resource: 'order',
+          action: 'UPDATED',
+          branchId: updated.branchId,
+          payload: {
+            orderId: updated.id,
+            orderCode: updated.code,
+            fromStatus: order.status,
+            status: updated.status,
+            reason,
+            changedBy,
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to publish order.status.updated event: ${message}`);
+    }
+
+    return updated;
+  }
+
+  async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng có ID "${orderId}"`);
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        paymentStatus,
+      },
+    });
+
+    try {
+      await this.rabbitmqService.publishEvent(
+        createRealtimeEvent({
+          type: 'order.payment.updated',
+          resource: 'order',
+          action: 'UPDATED',
+          branchId: updated.branchId,
+          payload: {
+            orderId: updated.id,
+            orderCode: updated.code,
+            paymentStatus: updated.paymentStatus,
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to publish order.payment.updated event: ${message}`);
+    }
+
+    return updated;
+  }
+
+  async getOrders(params?: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    branchId?: string;
+  }) {
+    return this.prisma.order.findMany({
+      where: {
+        status: params?.status,
+        paymentStatus: params?.paymentStatus,
+        branchId: params?.branchId,
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        items: true,
+        statusHistories: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+  }
 }
