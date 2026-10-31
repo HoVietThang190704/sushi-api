@@ -69,6 +69,7 @@ async function bootstrap() {
           }
 
           if (token) {
+            proxyReq.setHeader('authorization', `Bearer ${token}`);
             try {
               const payload = jwtService.verify(token, {
                 secret: process.env.JWT_SECRET,
@@ -103,6 +104,7 @@ async function bootstrap() {
           }
 
           if (token) {
+            proxyReq.setHeader('authorization', `Bearer ${token}`);
             try {
               const payload = jwtService.verify(token, {
                 secret: process.env.JWT_SECRET,
@@ -137,6 +139,7 @@ async function bootstrap() {
           }
 
           if (token) {
+            proxyReq.setHeader('authorization', `Bearer ${token}`);
             try {
               const payload = jwtService.verify(token, {
                 secret: process.env.JWT_SECRET,
@@ -171,6 +174,7 @@ async function bootstrap() {
           }
 
           if (token) {
+            proxyReq.setHeader('authorization', `Bearer ${token}`);
             try {
               const payload = jwtService.verify(token, {
                 secret: process.env.JWT_SECRET,
