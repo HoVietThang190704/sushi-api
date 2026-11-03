@@ -28,6 +28,11 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(180)
+  slug?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(100)
   barcode?: string;
 

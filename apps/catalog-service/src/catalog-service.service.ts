@@ -10,6 +10,17 @@ import { Prisma } from '@prisma/client';
 import { RabbitMQService } from '@common/rabbitmq';
 import { createRealtimeEvent } from '@contracts';
 
+export function toSlug(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 @Injectable()
 export class CatalogServiceService {
   constructor(
@@ -87,9 +98,19 @@ export class CatalogServiceService {
       }
     }
 
+    const rawSlug = dto.slug ? toSlug(dto.slug) : toSlug(dto.name);
+    let finalSlug = rawSlug;
+    const existingSlug = await this.prisma.product.findUnique({
+      where: { slug: finalSlug },
+    });
+    if (existingSlug) {
+      finalSlug = `${rawSlug}-${Math.random().toString(36).substring(2, 7)}`;
+    }
+
     const product = await this.prisma.product.create({
       data: {
         sku: dto.sku.toUpperCase(),
+        slug: finalSlug,
         barcode: dto.barcode,
         name: dto.name,
         type: dto.type,
@@ -132,9 +153,16 @@ export class CatalogServiceService {
     });
   }
 
-  async getProductById(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
+  async getProductById(identifier: string) {
+    const isUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        identifier,
+      );
+
+    const product = await this.prisma.product.findFirst({
+      where: isUuid
+        ? { OR: [{ id: identifier }, { slug: identifier }] }
+        : { slug: identifier },
       include: {
         category: true,
         comboItemsAsParent: {

@@ -79,6 +79,7 @@ model ProductCategory {
 model Product {
   id           String           @id @default(uuid()) @db.Uuid
   sku          String           @unique @db.VarChar(60)
+  slug         String?          @unique @db.VarChar(180)
   barcode      String?          @db.VarChar(100)
   name         String           @db.VarChar(160)
   type         ProductType      @default(SINGLE)
