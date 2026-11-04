@@ -381,12 +381,33 @@ export class OrderingService {
     status?: OrderStatus;
     paymentStatus?: PaymentStatus;
     branchId?: string;
+    startDate?: string;
+    endDate?: string;
   }) {
+    const createdAtFilter: Record<string, Date> = {};
+    if (params?.startDate) {
+      const start = new Date(params.startDate);
+      if (!isNaN(start.getTime())) {
+        start.setHours(0, 0, 0, 0);
+        createdAtFilter.gte = start;
+      }
+    }
+    if (params?.endDate) {
+      const end = new Date(params.endDate);
+      if (!isNaN(end.getTime())) {
+        end.setHours(23, 59, 59, 999);
+        createdAtFilter.lte = end;
+      }
+    }
+
     return this.prisma.order.findMany({
       where: {
         status: params?.status,
         paymentStatus: params?.paymentStatus,
         branchId: params?.branchId,
+        ...(Object.keys(createdAtFilter).length > 0
+          ? { createdAt: createdAtFilter }
+          : {}),
       },
       orderBy: { createdAt: 'desc' },
       include: {

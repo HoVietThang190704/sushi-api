@@ -43,8 +43,16 @@ export class OrderingController {
     @Query('status') status?: OrderStatus,
     @Query('paymentStatus') paymentStatus?: PaymentStatus,
     @Query('branchId') branchId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
-    return this.orderingService.getOrders({ status, paymentStatus, branchId });
+    return this.orderingService.getOrders({
+      status,
+      paymentStatus,
+      branchId,
+      startDate,
+      endDate,
+    });
   }
 
   @Patch(':id/status')
