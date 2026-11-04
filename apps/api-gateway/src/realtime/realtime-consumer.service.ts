@@ -16,11 +16,28 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
   private connection: amqp.ChannelModel | null = null;
   private channel: amqp.Channel | null = null;
   private isDestroyed = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly reconnectDelayMs = 5000;
 
   constructor(private readonly realtimeGateway: RealtimeGateway) {}
 
   async onModuleInit(): Promise<void> {
     await this.initRabbitMQ();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.isDestroyed || this.reconnectTimer) {
+      return;
+    }
+    this.logger.log(
+      `Scheduling RabbitMQ reconnect in ${this.reconnectDelayMs}ms...`,
+    );
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (!this.isDestroyed) {
+        await this.initRabbitMQ();
+      }
+    }, this.reconnectDelayMs);
   }
 
   async initRabbitMQ(): Promise<void> {
@@ -34,6 +51,7 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`RabbitMQ connection error: ${err.message}`);
         this.channel = null;
         this.connection = null;
+        this.scheduleReconnect();
       });
 
       this.connection.on('close', () => {
@@ -41,6 +59,7 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(
             'RabbitMQ connection closed. Attempting reconnect...',
           );
+          this.scheduleReconnect();
         }
         this.channel = null;
         this.connection = null;
@@ -87,6 +106,7 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
       );
       this.channel = null;
       this.connection = null;
+      this.scheduleReconnect();
     }
   }
 
@@ -117,6 +137,10 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     this.isDestroyed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     try {
       if (this.channel) {
         await this.channel.close();

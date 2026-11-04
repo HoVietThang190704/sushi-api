@@ -153,4 +153,65 @@ describe('RealtimeConsumerService', () => {
     expect(mockChannel.close).toHaveBeenCalled();
     expect(mockConnection.close).toHaveBeenCalled();
   });
+
+  it('should schedule reconnection when connection closes unexpectedly', async () => {
+    jest.useFakeTimers();
+    let closeHandler!: () => void;
+    mockConnection.on.mockImplementation(
+      (event: string, handler: () => void) => {
+        if (event === 'close') {
+          closeHandler = handler;
+        }
+      },
+    );
+
+    await service.initRabbitMQ();
+    expect(amqp.connect).toHaveBeenCalledTimes(1);
+
+    closeHandler();
+
+    jest.advanceTimersByTime(5000);
+
+    expect(amqp.connect).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('should schedule reconnection when initial connection fails', async () => {
+    jest.useFakeTimers();
+    (amqp.connect as jest.Mock).mockRejectedValueOnce(
+      new Error('Connection refused'),
+    );
+
+    await service.initRabbitMQ();
+    expect(amqp.connect).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(5000);
+
+    expect(amqp.connect).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
+  it('should not reconnect if module is destroyed', async () => {
+    jest.useFakeTimers();
+    let closeHandler!: () => void;
+    mockConnection.on.mockImplementation(
+      (event: string, handler: () => void) => {
+        if (event === 'close') {
+          closeHandler = handler;
+        }
+      },
+    );
+
+    await service.initRabbitMQ();
+    await service.onModuleDestroy();
+
+    if (closeHandler) {
+      closeHandler();
+    }
+
+    jest.advanceTimersByTime(10000);
+
+    expect(amqp.connect).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
 });
