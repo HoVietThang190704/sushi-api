@@ -377,6 +377,36 @@ export class OrderingService {
     return updated;
   }
 
+  private parseVietnamDateBoundary(dateStr: string, isEndOfDay = false): Date {
+    const parts = dateStr.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) {
+      throw new BadRequestException(
+        `Ngày "${dateStr}" không đúng định dạng YYYY-MM-DD`,
+      );
+    }
+    const [year, month, day] = parts;
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      throw new BadRequestException(`Ngày "${dateStr}" không hợp lệ`);
+    }
+
+    const testDate = new Date(Date.UTC(year, month - 1, day));
+    if (
+      testDate.getUTCFullYear() !== year ||
+      testDate.getUTCMonth() !== month - 1 ||
+      testDate.getUTCDate() !== day
+    ) {
+      throw new BadRequestException(`Ngày "${dateStr}" không tồn tại trên lịch`);
+    }
+
+    // Vietnam is UTC+7 (Indochina Time).
+    // Start of day in VN (00:00:00.000 +07:00) is equivalent to 17:00:00.000 UTC of previous day.
+    // End of day in VN (23:59:59.999 +07:00) is equivalent to 16:59:59.999 UTC of current day.
+    if (isEndOfDay) {
+      return new Date(Date.UTC(year, month - 1, day, 23 - 7, 59, 59, 999));
+    }
+    return new Date(Date.UTC(year, month - 1, day, 0 - 7, 0, 0, 0));
+  }
+
   async getOrders(params?: {
     status?: OrderStatus;
     paymentStatus?: PaymentStatus;
@@ -384,20 +414,16 @@ export class OrderingService {
     startDate?: string;
     endDate?: string;
   }) {
+    if (params?.startDate && params?.endDate && params.startDate > params.endDate) {
+      throw new BadRequestException('startDate không thể lớn hơn endDate');
+    }
+
     const createdAtFilter: Record<string, Date> = {};
     if (params?.startDate) {
-      const start = new Date(params.startDate);
-      if (!isNaN(start.getTime())) {
-        start.setHours(0, 0, 0, 0);
-        createdAtFilter.gte = start;
-      }
+      createdAtFilter.gte = this.parseVietnamDateBoundary(params.startDate, false);
     }
     if (params?.endDate) {
-      const end = new Date(params.endDate);
-      if (!isNaN(end.getTime())) {
-        end.setHours(23, 59, 59, 999);
-        createdAtFilter.lte = end;
-      }
+      createdAtFilter.lte = this.parseVietnamDateBoundary(params.endDate, true);
     }
 
     return this.prisma.order.findMany({

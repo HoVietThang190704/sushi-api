@@ -13,6 +13,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
+import { GetOrdersDto } from './dto/get-orders.dto';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 
 @Controller('orders')
@@ -39,20 +40,8 @@ export class OrderingController {
   }
 
   @Get()
-  async getOrders(
-    @Query('status') status?: OrderStatus,
-    @Query('paymentStatus') paymentStatus?: PaymentStatus,
-    @Query('branchId') branchId?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-  ) {
-    return this.orderingService.getOrders({
-      status,
-      paymentStatus,
-      branchId,
-      startDate,
-      endDate,
-    });
+  async getOrders(@Query() query: GetOrdersDto) {
+    return this.orderingService.getOrders(query);
   }
 
   @Patch(':id/status')

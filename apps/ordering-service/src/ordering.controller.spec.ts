@@ -48,21 +48,16 @@ describe('OrderingController', () => {
     expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', 'tok-1');
   });
 
-  it('should call service.getOrders with filters including date range', async () => {
-    await controller.getOrders(
-      OrderStatus.PENDING,
-      PaymentStatus.UNPAID,
-      'b-1',
-      '2026-11-01',
-      '2026-11-04',
-    );
-    expect(service.getOrders).toHaveBeenCalledWith({
+  it('should call service.getOrders with query dto including date range', async () => {
+    const query = {
       status: OrderStatus.PENDING,
       paymentStatus: PaymentStatus.UNPAID,
       branchId: 'b-1',
       startDate: '2026-11-01',
       endDate: '2026-11-04',
-    });
+    };
+    await controller.getOrders(query);
+    expect(service.getOrders).toHaveBeenCalledWith(query);
   });
 
   it('should call service.updateOrderStatus with id and dto', async () => {

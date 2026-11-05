@@ -377,4 +377,108 @@ describe('OrderingService - createOrder', () => {
       );
     });
   });
+
+  describe('OrderingService - getOrders', () => {
+    it('should query orders without date filter when none provided', async () => {
+      const mockOrders = [{ id: 'order-1', code: 'ORD-1' }];
+      jest.spyOn(prisma.order, 'findMany').mockResolvedValue(mockOrders as any);
+
+      const result = await service.getOrders({
+        status: OrderStatus.PENDING,
+        branchId: 'branch-1',
+      });
+
+      expect(result).toEqual(mockOrders);
+      expect(prisma.order.findMany).toHaveBeenCalledWith({
+        where: {
+          status: OrderStatus.PENDING,
+          paymentStatus: undefined,
+          branchId: 'branch-1',
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          items: true,
+          statusHistories: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+    });
+
+    it('should calculate Vietnam timezone start-of-day boundary for startDate', async () => {
+      jest.spyOn(prisma.order, 'findMany').mockResolvedValue([]);
+
+      await service.getOrders({ startDate: '2026-11-04' });
+
+      // 00:00:00 ICT on 2026-11-04 is 17:00:00 UTC on 2026-11-03
+      const expectedStart = new Date(Date.UTC(2026, 10, 3, 17, 0, 0, 0));
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: { gte: expectedStart },
+          }),
+        }),
+      );
+    });
+
+    it('should calculate Vietnam timezone end-of-day boundary for endDate', async () => {
+      jest.spyOn(prisma.order, 'findMany').mockResolvedValue([]);
+
+      await service.getOrders({ endDate: '2026-11-04' });
+
+      // 23:59:59.999 ICT on 2026-11-04 is 16:59:59.999 UTC on 2026-11-04
+      const expectedEnd = new Date(Date.UTC(2026, 10, 4, 16, 59, 59, 999));
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: { lte: expectedEnd },
+          }),
+        }),
+      );
+    });
+
+    it('should filter with both startDate and endDate boundaries', async () => {
+      jest.spyOn(prisma.order, 'findMany').mockResolvedValue([]);
+
+      await service.getOrders({
+        startDate: '2026-11-01',
+        endDate: '2026-11-04',
+      });
+
+      const expectedStart = new Date(Date.UTC(2026, 10, 1 - 1, 17, 0, 0, 0)); // 2026-10-31T17:00:00.000Z
+      const expectedEnd = new Date(Date.UTC(2026, 10, 4, 16, 59, 59, 999)); // 2026-11-04T16:59:59.999Z
+
+      expect(prisma.order.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: {
+              gte: expectedStart,
+              lte: expectedEnd,
+            },
+          }),
+        }),
+      );
+    });
+
+    it('should throw BadRequestException if startDate is after endDate', async () => {
+      await expect(
+        service.getOrders({
+          startDate: '2026-11-10',
+          endDate: '2026-11-01',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException for invalid date string format', async () => {
+      await expect(
+        service.getOrders({ startDate: 'invalid-date' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException for non-existent calendar date (e.g. Feb 30)', async () => {
+      await expect(
+        service.getOrders({ startDate: '2026-02-30' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
 });
