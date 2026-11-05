@@ -178,9 +178,14 @@ export class OrderingService {
     };
   }
 
-  async trackOrder(code: string, token: string) {
-    if (!code || !token) {
-      throw new BadRequestException('Mã đơn hàng và mã truy cập là bắt buộc');
+  async trackOrder(code: string, token?: string, phone?: string) {
+    if (!code) {
+      throw new BadRequestException('Mã đơn hàng là bắt buộc');
+    }
+    if (!token && !phone) {
+      throw new BadRequestException(
+        'Mã truy cập hoặc số điện thoại là bắt buộc để theo dõi đơn hàng',
+      );
     }
 
     const order = await this.prisma.order.findUnique({
@@ -197,15 +202,35 @@ export class OrderingService {
       throw new NotFoundException(`Không tìm thấy đơn hàng với mã "${code}"`);
     }
 
-    const expectedHash = this.hashSecretToken(token);
-    if (order.accessTokenHash !== expectedHash) {
-      throw new UnauthorizedException('Mã truy cập theo dõi đơn hàng không chính xác');
+    let canCancel = false;
+    if (token) {
+      const expectedHash = this.hashSecretToken(token);
+      if (order.accessTokenHash !== expectedHash) {
+        throw new UnauthorizedException(
+          'Mã truy cập theo dõi đơn hàng không chính xác',
+        );
+      }
+      canCancel =
+        order.status === OrderStatus.PENDING ||
+        order.status === OrderStatus.CONFIRMED;
+    } else if (phone) {
+      const clearInputPhone = phone.replace(/\D/g, '');
+      const clearCustomerPhone = order.customerPhone.replace(/\D/g, '');
+      if (clearInputPhone !== clearCustomerPhone) {
+        throw new UnauthorizedException(
+          'Số điện thoại không khớp với thông tin khách hàng của đơn hàng',
+        );
+      }
+      canCancel = false;
     }
 
-    // Sanitize order output: remove internal token hash
+    // Sanitize order output: remove internal token hash and include canCancel flag
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { accessTokenHash: _, ...sanitizedOrder } = order;
-    return sanitizedOrder;
+    return {
+      ...sanitizedOrder,
+      canCancel,
+    };
   }
 
   async cancelOrderByCustomer(code: string, token: string, reason?: string) {
@@ -223,7 +248,9 @@ export class OrderingService {
 
     const expectedHash = this.hashSecretToken(token);
     if (order.accessTokenHash !== expectedHash) {
-      throw new UnauthorizedException('Mã truy cập theo dõi đơn hàng không chính xác');
+      throw new UnauthorizedException(
+        'Mã truy cập theo dõi đơn hàng không chính xác',
+      );
     }
 
     if (
@@ -273,7 +300,9 @@ export class OrderingService {
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Failed to publish order.status.updated event: ${message}`);
+      this.logger.warn(
+        `Failed to publish order.status.updated event: ${message}`,
+      );
     }
 
     return updated;
@@ -333,7 +362,9 @@ export class OrderingService {
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Failed to publish order.status.updated event: ${message}`);
+      this.logger.warn(
+        `Failed to publish order.status.updated event: ${message}`,
+      );
     }
 
     return updated;
@@ -371,7 +402,9 @@ export class OrderingService {
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Failed to publish order.payment.updated event: ${message}`);
+      this.logger.warn(
+        `Failed to publish order.payment.updated event: ${message}`,
+      );
     }
 
     return updated;
@@ -395,7 +428,9 @@ export class OrderingService {
       testDate.getUTCMonth() !== month - 1 ||
       testDate.getUTCDate() !== day
     ) {
-      throw new BadRequestException(`Ngày "${dateStr}" không tồn tại trên lịch`);
+      throw new BadRequestException(
+        `Ngày "${dateStr}" không tồn tại trên lịch`,
+      );
     }
 
     // Vietnam is UTC+7 (Indochina Time).
@@ -414,13 +449,20 @@ export class OrderingService {
     startDate?: string;
     endDate?: string;
   }) {
-    if (params?.startDate && params?.endDate && params.startDate > params.endDate) {
+    if (
+      params?.startDate &&
+      params?.endDate &&
+      params.startDate > params.endDate
+    ) {
       throw new BadRequestException('startDate không thể lớn hơn endDate');
     }
 
     const createdAtFilter: Record<string, Date> = {};
     if (params?.startDate) {
-      createdAtFilter.gte = this.parseVietnamDateBoundary(params.startDate, false);
+      createdAtFilter.gte = this.parseVietnamDateBoundary(
+        params.startDate,
+        false,
+      );
     }
     if (params?.endDate) {
       createdAtFilter.lte = this.parseVietnamDateBoundary(params.endDate, true);

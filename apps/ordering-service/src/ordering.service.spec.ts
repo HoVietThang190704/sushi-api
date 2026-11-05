@@ -238,8 +238,42 @@ describe('OrderingService - createOrder', () => {
       expect(result.code).toBe('ORD-20261025-1111');
       expect(result.status).toBe('PENDING');
       expect(result.items.length).toBe(1);
+      expect(result.canCancel).toBe(true);
       // Access token hash must NOT be returned in tracking result
       expect((result as any).accessTokenHash).toBeUndefined();
+    });
+
+    it('should return order when tracking with matching customer phone', async () => {
+      const mockOrder = {
+        id: 'ord-phone-1',
+        code: 'ORD-PHONE-01',
+        customerPhone: '0901234567',
+        status: 'PENDING',
+        accessTokenHash: 'some-hash',
+        items: [],
+        statusHistories: [],
+      };
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(mockOrder as any);
+
+      const result = await service.trackOrder('ORD-PHONE-01', undefined, '090 123 4567');
+      expect(result.code).toBe('ORD-PHONE-01');
+      expect(result.canCancel).toBe(false);
+      expect((result as any).accessTokenHash).toBeUndefined();
+    });
+
+    it('should throw UnauthorizedException when phone does not match', async () => {
+      const mockOrder = {
+        id: 'ord-phone-1',
+        code: 'ORD-PHONE-01',
+        customerPhone: '0901234567',
+        accessTokenHash: 'some-hash',
+        items: [],
+      };
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(mockOrder as any);
+
+      await expect(
+        service.trackOrder('ORD-PHONE-01', undefined, '0988888888'),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 

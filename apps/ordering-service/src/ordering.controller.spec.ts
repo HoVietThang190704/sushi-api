@@ -45,7 +45,12 @@ describe('OrderingController', () => {
 
   it('should call service.trackOrder with code and token', async () => {
     await controller.trackOrder('ORD-1', 'tok-1');
-    expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', 'tok-1');
+    expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', 'tok-1', undefined);
+  });
+
+  it('should call service.trackOrder with code and phone', async () => {
+    await controller.trackOrder('ORD-1', undefined, '0901234567');
+    expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', undefined, '0901234567');
   });
 
   it('should call service.getOrders with query dto including date range', async () => {

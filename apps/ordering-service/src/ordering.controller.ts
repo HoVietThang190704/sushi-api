@@ -34,9 +34,10 @@ export class OrderingController {
   @Get('track')
   async trackOrder(
     @Query('code') code: string,
-    @Query('token') token: string,
+    @Query('token') token?: string,
+    @Query('phone') phone?: string,
   ) {
-    return this.orderingService.trackOrder(code, token);
+    return this.orderingService.trackOrder(code, token, phone);
   }
 
   @Get()
