@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 
 export const REALTIME_EXCHANGE = 'sushi.events';
+export const ORDER_TRACK_SCOPE = 'order_track';
 
 export type RealtimeResource = 'inventory' | 'catalog' | 'order' | 'identity';
 
