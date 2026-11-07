@@ -171,18 +171,16 @@ export class ShippingService {
         },
       });
 
-      if (!specificRule) {
-        throw new BadRequestException(
-          `Chi nhánh được chọn không hỗ trợ giao hàng tới ${cleanWard}`,
-        );
+      if (specificRule) {
+        return {
+          district: specificRule.district,
+          ward: specificRule.ward,
+          fee: Number(specificRule.fee),
+          branch: specificRule.branch,
+        };
       }
-
-      return {
-        district: specificRule.district,
-        ward: specificRule.ward,
-        fee: Number(specificRule.fee),
-        branch: specificRule.branch,
-      };
+      // Nếu branchId truyền lên không hỗ trợ phường này (ví dụ do đổi phường khác),
+      // tự động fallback về chi nhánh mặc định của phường để không làm gián đoạn đặt hàng.
     }
 
     // Nếu không truyền branchId, ưu tiên lấy chi nhánh mặc định

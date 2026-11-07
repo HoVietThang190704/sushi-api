@@ -4,14 +4,18 @@ import {
   IsOptional,
   IsNumber,
   IsBoolean,
-  IsUUID,
+  Matches,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+export const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class CreateShippingRuleDto {
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
+  @Matches(UUID_REGEX, { message: 'branchId must be a valid UUID' })
   branchId!: string;
 
   @IsString()
@@ -65,7 +69,8 @@ export class CalculateShippingDto {
   @IsNotEmpty()
   ward!: string;
 
-  @IsUUID()
+  @IsString()
   @IsOptional()
+  @Matches(UUID_REGEX, { message: 'branchId must be a valid UUID' })
   branchId?: string;
 }

@@ -8,6 +8,7 @@ import {
   Min,
   IsUUID,
   IsEmail,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -59,7 +60,10 @@ export class CreateOrderDto {
   paymentMethod?: string;
 
   @IsOptional()
-  @IsUUID()
+  @IsString()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'branchId must be a valid UUID',
+  })
   branchId?: string;
 
   @IsOptional()

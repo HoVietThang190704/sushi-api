@@ -11,7 +11,9 @@ export class GetOrdersDto {
   paymentStatus?: PaymentStatus;
 
   @IsOptional()
-  @IsUUID('4', { message: 'Mã chi nhánh (branchId) phải là UUID hợp lệ' })
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'Mã chi nhánh (branchId) phải là UUID hợp lệ',
+  })
   branchId?: string;
 
   @IsOptional()
