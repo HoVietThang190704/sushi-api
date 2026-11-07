@@ -7,7 +7,16 @@ import {
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
-import { RealtimeDomainEvent } from '@contracts';
+import { RealtimeDomainEvent, ORDER_TRACK_SCOPE } from '@contracts';
+import { UserRole } from '@prisma/client';
+
+export const REALTIME_ROOMS = {
+  SUPER_ADMIN: `role:${UserRole.SUPER_ADMIN}`,
+  ADMIN: 'role:ADMIN',
+  AUTHENTICATED: 'authenticated',
+  branch: (branchId: string) => `branch:${branchId}`,
+  order: (orderCode: string) => `order:${orderCode}`,
+} as const;
 
 function parseCookies(cookieHeader?: string): Record<string, string> {
   if (!cookieHeader) return {};
@@ -37,6 +46,8 @@ export interface AuthenticatedUserPayload {
   email?: string;
   role?: string;
   branchId?: string | null;
+  scope?: string;
+  orderCode?: string;
   [key: string]: unknown;
 }
 
@@ -58,27 +69,27 @@ export class RealtimeGateway
   constructor(private readonly jwtService: JwtService) {}
 
   private extractToken(client: Socket): string | undefined {
-    // 1. From cookie header
+    // 1. From handshake auth token (explicit token from client, e.g. guest tracking ticket)
+    if (client.handshake.auth?.token) {
+      const token = String(client.handshake.auth.token);
+      return token.replace(/^Bearer\s+/i, '').trim();
+    }
+
+    // 2. From handshake authorization header
+    const authHeader = client.handshake.headers?.authorization;
+    if (authHeader) {
+      return String(authHeader)
+        .replace(/^Bearer\s+/i, '')
+        .trim();
+    }
+
+    // 3. From cookie header (fallback for dashboard web app session cookies)
     const cookieHeader = client.handshake.headers?.cookie;
     if (cookieHeader) {
       const cookies = parseCookies(cookieHeader);
       if (cookies['access_token']) {
         return cookies['access_token'];
       }
-    }
-
-    // 2. From handshake auth token
-    if (client.handshake.auth?.token) {
-      const token = String(client.handshake.auth.token);
-      return token.replace(/^Bearer\s+/i, '').trim();
-    }
-
-    // 3. From handshake authorization header
-    const authHeader = client.handshake.headers?.authorization;
-    if (authHeader) {
-      return String(authHeader)
-        .replace(/^Bearer\s+/i, '')
-        .trim();
     }
 
     return undefined;
@@ -102,13 +113,22 @@ export class RealtimeGateway
       client.data = client.data || {};
       client.data.user = payload;
 
+      // Guest order tracking token: joins only the specific order room
+      if (payload.scope === ORDER_TRACK_SCOPE && payload.orderCode) {
+        await client.join(REALTIME_ROOMS.order(payload.orderCode));
+        this.logger.log(
+          `Guest tracker connected: ${client.id} (order: ${payload.orderCode})`,
+        );
+        return;
+      }
+
       if (payload.branchId) {
-        await client.join(`branch:${payload.branchId}`);
+        await client.join(REALTIME_ROOMS.branch(payload.branchId));
       }
       if (payload.role) {
         await client.join(`role:${payload.role}`);
       }
-      await client.join('authenticated');
+      await client.join(REALTIME_ROOMS.AUTHENTICATED);
 
       this.logger.log(
         `Client connected: ${client.id} (user: ${payload.sub || payload.id || 'unknown'}, role: ${payload.role || 'none'}, branch: ${payload.branchId || 'none'})`,
@@ -128,9 +148,27 @@ export class RealtimeGateway
 
   broadcastRealtimeEvent(event: RealtimeDomainEvent): void {
     if (event.branchId) {
-      this.server.to(`branch:${event.branchId}`).emit('realtime:event', event);
+      this.server
+        .to(REALTIME_ROOMS.branch(event.branchId))
+        .to(REALTIME_ROOMS.SUPER_ADMIN)
+        .to(REALTIME_ROOMS.ADMIN)
+        .emit('realtime:event', event);
     } else {
-      this.server.to('authenticated').emit('realtime:event', event);
+      this.server.to(REALTIME_ROOMS.AUTHENTICATED).emit('realtime:event', event);
+    }
+
+    // Broadcast to specific order room for customers/guests
+    const orderCode = (event.payload?.orderCode || event.payload?.code) as
+      | string
+      | undefined;
+    if (orderCode && event.resource === 'order') {
+      this.server.to(REALTIME_ROOMS.order(orderCode)).emit('order:updated', {
+        orderCode,
+        type: event.type,
+        status: event.payload?.status,
+        paymentStatus: event.payload?.paymentStatus,
+        timestamp: event.timestamp || new Date().toISOString(),
+      });
     }
   }
 }

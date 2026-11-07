@@ -6,14 +6,17 @@ import {
 } from '@nestjs/common';
 import { OrderingService } from './ordering.service';
 import { PrismaService } from './prisma.service';
+import { ShippingService } from './shipping/shipping.service';
 import { RabbitMQService } from '@common/rabbitmq';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { createHash } from 'crypto';
+import { JwtService } from '@nestjs/jwt';
 
 describe('OrderingService - createOrder', () => {
   let service: OrderingService;
   let prisma: PrismaService;
   let rabbitmqService: RabbitMQService;
+  let jwtService: JwtService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -43,12 +46,31 @@ describe('OrderingService - createOrder', () => {
             publishEvent: jest.fn().mockResolvedValue(true),
           },
         },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: jest.fn().mockReturnValue('mock-jwt-tracking-ticket'),
+          },
+        },
+        {
+          provide: ShippingService,
+          useValue: {
+            calculateShipping: jest.fn().mockResolvedValue({
+              district: 'Quận 1',
+              ward: 'Phường Bến Nghé',
+              fee: 20000,
+              branch: { id: '00000000-0000-0000-0000-000000000001', name: 'Chi nhánh 1' },
+            }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<OrderingService>(OrderingService);
     prisma = module.get<PrismaService>(PrismaService);
     rabbitmqService = module.get<RabbitMQService>(RabbitMQService);
+    jwtService = module.get<JwtService>(JwtService);
+    shippingService = module.get<ShippingService>(ShippingService);
   });
 
   it('should throw BadRequestException if items array is empty', async () => {
@@ -239,11 +261,12 @@ describe('OrderingService - createOrder', () => {
       expect(result.status).toBe('PENDING');
       expect(result.items.length).toBe(1);
       expect(result.canCancel).toBe(true);
+      expect(result.trackingTicket).toBe('mock-jwt-tracking-ticket');
       // Access token hash must NOT be returned in tracking result
       expect((result as any).accessTokenHash).toBeUndefined();
     });
 
-    it('should return order when tracking with matching customer phone', async () => {
+    it('should return order when tracking with matching customer phone without trackingTicket', async () => {
       const mockOrder = {
         id: 'ord-phone-1',
         code: 'ORD-PHONE-01',
@@ -258,6 +281,7 @@ describe('OrderingService - createOrder', () => {
       const result = await service.trackOrder('ORD-PHONE-01', undefined, '090 123 4567');
       expect(result.code).toBe('ORD-PHONE-01');
       expect(result.canCancel).toBe(false);
+      expect(result.trackingTicket).toBeUndefined();
       expect((result as any).accessTokenHash).toBeUndefined();
     });
 

@@ -6,11 +6,13 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
+import { ShippingService } from './shipping/shipping.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RabbitMQService } from '@common/rabbitmq';
-import { createRealtimeEvent } from '@contracts';
+import { createRealtimeEvent, ORDER_TRACK_SCOPE } from '@contracts';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
+import { JwtService } from '@nestjs/jwt';
 
 export const DEFAULT_BRANCH_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -21,6 +23,8 @@ export class OrderingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rabbitmqService: RabbitMQService,
+    private readonly jwtService: JwtService,
+    private readonly shippingService: ShippingService,
   ) {}
 
   private generateOrderCode(): string {
@@ -94,13 +98,31 @@ export class OrderingService {
       });
     }
 
-    // 3. Generate raw tracking token and SHA-256 hash
+    // 3. Tính phí giao hàng (Shipping Fee) dựa vào Xã/Phường & Chi nhánh
+    let shippingFee = 0;
+    let effectiveBranchId = dto.branchId || DEFAULT_BRANCH_ID;
+
+    if (dto.district && dto.ward) {
+      const shippingCalculation = await this.shippingService.calculateShipping({
+        district: dto.district,
+        ward: dto.ward,
+        branchId: dto.branchId,
+      });
+      shippingFee = shippingCalculation.fee;
+      if (shippingCalculation.branch?.id) {
+        effectiveBranchId = shippingCalculation.branch.id;
+      }
+    }
+
+    const finalTotalAmount = calculatedTotal + shippingFee;
+
+    // 4. Generate raw tracking token and SHA-256 hash
     const rawTrackingToken = randomBytes(24).toString('hex');
     const accessTokenHash = this.hashSecretToken(rawTrackingToken);
     const code = this.generateOrderCode();
-    const branchId = dto.branchId || DEFAULT_BRANCH_ID;
+    const branchId = effectiveBranchId;
 
-    // 4. Save in database transaction
+    // 5. Save in database transaction
     const order = await this.prisma.$transaction(async (tx) => {
       const newOrder = await tx.order.create({
         data: {
@@ -110,14 +132,15 @@ export class OrderingService {
           customerPhone: dto.customerPhone.trim(),
           customerEmail: dto.customerEmail?.trim(),
           address: dto.address?.trim(),
-          province: dto.province?.trim(),
+          province: dto.province?.trim() || 'TP. Hồ Chí Minh',
           district: dto.district?.trim(),
           ward: dto.ward?.trim(),
           note: dto.note?.trim(),
           status: OrderStatus.PENDING,
           paymentStatus: PaymentStatus.UNPAID,
           paymentMethod: 'CASH',
-          totalAmount: calculatedTotal,
+          shippingFee,
+          totalAmount: finalTotalAmount,
           idempotencyKey: dto.idempotencyKey || null,
           accessTokenHash,
           items: {
@@ -140,7 +163,7 @@ export class OrderingService {
           orderId: newOrder.id,
           fromStatus: null,
           toStatus: OrderStatus.PENDING,
-          reason: 'Khởi tạo đơn hàng Take Away',
+          reason: 'Khởi tạo đơn hàng Giao tận nơi (Delivery)',
           changedBy: 'CUSTOMER',
         },
       });
@@ -203,6 +226,8 @@ export class OrderingService {
     }
 
     let canCancel = false;
+    let trackingTicket: string | undefined = undefined;
+
     if (token) {
       const expectedHash = this.hashSecretToken(token);
       if (order.accessTokenHash !== expectedHash) {
@@ -213,6 +238,17 @@ export class OrderingService {
       canCancel =
         order.status === OrderStatus.PENDING ||
         order.status === OrderStatus.CONFIRMED;
+
+      trackingTicket = this.jwtService.sign(
+        {
+          orderCode: order.code,
+          scope: ORDER_TRACK_SCOPE,
+        },
+        {
+          secret: process.env.JWT_SECRET || 'your-secret-key',
+          expiresIn: '24h',
+        },
+      );
     } else if (phone) {
       const clearInputPhone = phone.replace(/\D/g, '');
       const clearCustomerPhone = order.customerPhone.replace(/\D/g, '');
@@ -224,12 +260,13 @@ export class OrderingService {
       canCancel = false;
     }
 
-    // Sanitize order output: remove internal token hash and include canCancel flag
+    // Sanitize order output: remove internal token hash and include canCancel flag & trackingTicket
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { accessTokenHash: _, ...sanitizedOrder } = order;
     return {
       ...sanitizedOrder,
       canCancel,
+      trackingTicket,
     };
   }
 

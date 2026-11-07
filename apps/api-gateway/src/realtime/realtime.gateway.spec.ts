@@ -138,6 +138,70 @@ describe('RealtimeGateway', () => {
       expect(mockClient.disconnect).not.toHaveBeenCalled();
     });
 
+    it('should prioritize explicit handshake auth token over ambient access_token cookie', async () => {
+      const mockClient = {
+        id: 'socket-priority',
+        handshake: {
+          headers: {
+            cookie: 'access_token=cookie-admin-token',
+          },
+          auth: {
+            token: 'explicit-guest-token',
+          },
+        },
+        data: {},
+        join: jest.fn().mockResolvedValue(undefined),
+        disconnect: jest.fn(),
+      } as unknown as Socket;
+
+      const guestPayload = {
+        scope: 'order_track',
+        orderCode: 'ORD-EXPLICIT-1',
+      };
+      (jwtService.verifyAsync as jest.Mock).mockResolvedValue(guestPayload);
+
+      await gateway.handleConnection(mockClient);
+
+      expect(jwtService.verifyAsync).toHaveBeenCalledWith('explicit-guest-token', {
+        secret: expect.any(String),
+      });
+      expect(mockClient.join).toHaveBeenCalledWith('order:ORD-EXPLICIT-1');
+      expect(mockClient.join).not.toHaveBeenCalledWith('authenticated');
+    });
+
+    it('should authenticate guest tracker token and join only the specific order room', async () => {
+      const mockClient = {
+        id: 'socket-guest',
+        handshake: {
+          headers: {},
+          auth: {
+            token: 'guest-tracking-jwt',
+          },
+        },
+        data: {},
+        join: jest.fn().mockResolvedValue(undefined),
+        disconnect: jest.fn(),
+      } as unknown as Socket;
+
+      const guestPayload = {
+        scope: 'order_track',
+        orderCode: 'ORD-ABCXYZ',
+      };
+      (jwtService.verifyAsync as jest.Mock).mockResolvedValue(guestPayload);
+
+      await gateway.handleConnection(mockClient);
+
+      expect(jwtService.verifyAsync).toHaveBeenCalledWith('guest-tracking-jwt', {
+        secret: expect.any(String),
+      });
+      expect(mockClient.data.user).toEqual(guestPayload);
+      expect(mockClient.join).toHaveBeenCalledWith('order:ORD-ABCXYZ');
+      expect(mockClient.join).not.toHaveBeenCalledWith('authenticated');
+      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringContaining('branch:'));
+      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringContaining('role:'));
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
+    });
+
     it('should disconnect client when token is missing', async () => {
       const mockClient = {
         id: 'socket-no-token',
@@ -186,7 +250,7 @@ describe('RealtimeGateway', () => {
   });
 
   describe('broadcastRealtimeEvent', () => {
-    it('should emit to branch room when event has branchId', () => {
+    it('should emit to branch room, role:SUPER_ADMIN, and role:ADMIN when event has branchId', () => {
       const event: RealtimeDomainEvent = {
         id: 'event-1',
         type: 'inventory.stock.updated',
@@ -200,6 +264,8 @@ describe('RealtimeGateway', () => {
       gateway.broadcastRealtimeEvent(event);
 
       expect(mockServer.to).toHaveBeenCalledWith('branch:branch-abc');
+      expect(mockServer.to).toHaveBeenCalledWith('role:SUPER_ADMIN');
+      expect(mockServer.to).toHaveBeenCalledWith('role:ADMIN');
       expect(mockServer.emit).toHaveBeenCalledWith('realtime:event', event);
     });
 
@@ -218,6 +284,34 @@ describe('RealtimeGateway', () => {
 
       expect(mockServer.to).toHaveBeenCalledWith('authenticated');
       expect(mockServer.emit).toHaveBeenCalledWith('realtime:event', event);
+    });
+
+    it('should emit order:updated to order room when event has resource order and orderCode', () => {
+      const event: RealtimeDomainEvent = {
+        id: 'event-3',
+        type: 'order.status.updated',
+        resource: 'order',
+        action: 'UPDATED',
+        branchId: 'branch-xyz',
+        timestamp: '2026-11-05T10:00:00.000Z',
+        payload: {
+          orderId: 'order-123',
+          orderCode: 'ORD-999999',
+          status: 'PREPARING',
+        },
+      };
+
+      gateway.broadcastRealtimeEvent(event);
+
+      expect(mockServer.to).toHaveBeenCalledWith('branch:branch-xyz');
+      expect(mockServer.to).toHaveBeenCalledWith('order:ORD-999999');
+      expect(mockServer.emit).toHaveBeenCalledWith('order:updated', {
+        orderCode: 'ORD-999999',
+        type: 'order.status.updated',
+        status: 'PREPARING',
+        paymentStatus: undefined,
+        timestamp: '2026-11-05T10:00:00.000Z',
+      });
     });
   });
 });

@@ -191,6 +191,41 @@ async function bootstrap() {
     }),
   );
 
+  // 7. Reverse Proxy: /api/shipping/* -> http://localhost:3004/shipping/*
+  app.use(
+    '/api/shipping',
+    createProxyMiddleware({
+      target: orderingServiceUrl,
+      changeOrigin: true,
+      pathRewrite: (path) => `/shipping${path}`,
+      on: {
+        proxyReq: (proxyReq, req) => {
+          const customReq = req as AuthenticatedRequest;
+          fixRequestBody(proxyReq, req);
+
+          let token = customReq.headers.authorization?.replace('Bearer ', '');
+          if (!token && customReq.cookies) {
+            token = customReq.cookies['access_token'];
+          }
+
+          if (token) {
+            proxyReq.setHeader('authorization', `Bearer ${token}`);
+            try {
+              const payload = jwtService.verify(token, {
+                secret: process.env.JWT_SECRET,
+              });
+              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
+              if (payload?.role)
+                proxyReq.setHeader('x-user-role', payload.role);
+              if (payload?.branchId)
+                proxyReq.setHeader('x-user-branch-id', payload.branchId);
+            } catch {}
+          }
+        },
+      },
+    }),
+  );
+
   const port = process.env.API_GATEWAY_PORT || 3000;
   await app.listen(port, '0.0.0.0');
   console.log(`API Gateway is running on http://0.0.0.0:${port}`);
