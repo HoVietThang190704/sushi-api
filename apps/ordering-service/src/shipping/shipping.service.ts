@@ -15,6 +15,7 @@ export interface WardLocationItem {
   district: string;
   ward: string;
   wardCode?: string;
+  formerWards?: string;
   isSupported: boolean;
   defaultBranch?: {
     id: string;
@@ -84,6 +85,7 @@ export class ShippingService {
         district: w.area,
         ward: w.name,
         wardCode: w.code,
+        formerWards: w.formerWards,
         isSupported: false,
         supportedBranches: [],
       });
