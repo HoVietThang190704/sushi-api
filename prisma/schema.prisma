@@ -202,6 +202,7 @@ enum OrderStatus {
   CONFIRMED
   PREPARING
   READY_FOR_PICKUP
+  DELIVERING
   COMPLETED
   CANCELLED
 
@@ -216,10 +217,47 @@ enum PaymentStatus {
   @@schema("ordering")
 }
 
+model Branch {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(160)
+  address   String   @db.Text
+  phone     String   @db.VarChar(30)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  orders        Order[]
+  shippingRules ShippingRule[]
+
+  @@map("branches")
+  @@schema("ordering")
+}
+
+model ShippingRule {
+  id        String   @id @default(uuid()) @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  province  String   @default("TP. Hồ Chí Minh") @db.VarChar(100)
+  district  String   @db.VarChar(100)
+  ward      String   @db.VarChar(100)
+  fee       Decimal  @default(0) @db.Decimal(18, 2)
+  isDefault Boolean  @default(false) @map("is_default")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([branchId, district, ward])
+  @@index([district, ward, isActive])
+  @@map("shipping_rules")
+  @@schema("ordering")
+}
+
 model Order {
   id               String        @id @default(uuid()) @db.Uuid
   code             String        @unique @db.VarChar(50)
   branchId         String        @map("branch_id") @db.Uuid
+  branch           Branch?       @relation(fields: [branchId], references: [id])
   customerName     String        @map("customer_name") @db.VarChar(120)
   customerPhone    String        @map("customer_phone") @db.VarChar(30)
   customerEmail    String?       @map("customer_email") @db.VarChar(255)
@@ -231,6 +269,7 @@ model Order {
   status           OrderStatus   @default(PENDING)
   paymentStatus    PaymentStatus @default(UNPAID) @map("payment_status")
   paymentMethod    String        @default("CASH") @map("payment_method") @db.VarChar(30)
+  shippingFee      Decimal       @default(0) @map("shipping_fee") @db.Decimal(18, 2)
   totalAmount      Decimal       @map("total_amount") @db.Decimal(18, 2)
   idempotencyKey   String?       @unique @map("idempotency_key") @db.VarChar(100)
   accessTokenHash  String        @map("access_token_hash") @db.VarChar(64)
