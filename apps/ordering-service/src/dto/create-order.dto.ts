@@ -55,6 +55,10 @@ export class CreateOrderDto {
   note?: string;
 
   @IsOptional()
+  @IsString()
+  paymentMethod?: string;
+
+  @IsOptional()
   @IsUUID()
   branchId?: string;
 

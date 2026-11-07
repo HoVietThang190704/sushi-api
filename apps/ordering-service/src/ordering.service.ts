@@ -102,7 +102,7 @@ export class OrderingService {
     let shippingFee = 0;
     let effectiveBranchId = dto.branchId || DEFAULT_BRANCH_ID;
 
-    if (dto.district && dto.ward) {
+    if (dto.ward) {
       const shippingCalculation = await this.shippingService.calculateShipping({
         district: dto.district,
         ward: dto.ward,
@@ -138,7 +138,7 @@ export class OrderingService {
           note: dto.note?.trim(),
           status: OrderStatus.PENDING,
           paymentStatus: PaymentStatus.UNPAID,
-          paymentMethod: 'CASH',
+          paymentMethod: dto.paymentMethod?.trim() || 'CASH',
           shippingFee,
           totalAmount: finalTotalAmount,
           idempotencyKey: dto.idempotencyKey || null,

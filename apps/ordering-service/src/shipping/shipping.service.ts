@@ -9,10 +9,12 @@ import {
   UpdateShippingRuleDto,
   CalculateShippingDto,
 } from './dto/shipping-rule.dto';
+import { VietnamAddressService } from './vietnam-address.service';
 
 export interface WardLocationItem {
   district: string;
   ward: string;
+  wardCode?: string;
   isSupported: boolean;
   defaultBranch?: {
     id: string;
@@ -31,7 +33,10 @@ export interface WardLocationItem {
 
 @Injectable()
 export class ShippingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly vietnamAddressService: VietnamAddressService,
+  ) {}
 
   // 1. Lấy toàn bộ danh sách chi nhánh
   async getBranches() {
@@ -58,6 +63,7 @@ export class ShippingService {
   }
 
   // 3. Lấy danh sách các địa điểm Phường/Xã TP.HCM công khai (Dành cho Storefront Dropdown)
+  // Cung cấp đầy đủ 168 đơn vị hành chính cấp xã của TP.HCM mới theo Nghị quyết 1685
   async getLocations(): Promise<WardLocationItem[]> {
     const rules = await this.prisma.shippingRule.findMany({
       where: { isActive: true },
@@ -69,20 +75,47 @@ export class ShippingService {
       orderBy: [{ district: 'asc' }, { ward: 'asc' }],
     });
 
+    const officialWards = this.vietnamAddressService.getAllWards();
     const locationMap = new Map<string, WardLocationItem>();
 
+    // 1. Khởi tạo sẵn tất cả 168 phường/xã của TP.HCM (mặc định isSupported: false)
+    for (const w of officialWards) {
+      locationMap.set(w.name.toLowerCase(), {
+        district: w.area,
+        ward: w.name,
+        wardCode: w.code,
+        isSupported: false,
+        supportedBranches: [],
+      });
+    }
+
+    // 2. Map các rule đang kích hoạt vào phường/xã tương ứng
     for (const rule of rules) {
-      const key = `${rule.district}__${rule.ward}`;
-      if (!locationMap.has(key)) {
-        locationMap.set(key, {
+      const cleanWardName = rule.ward.trim();
+      const lowerKey = cleanWardName.toLowerCase();
+
+      let item = locationMap.get(lowerKey);
+
+      // Thử tìm theo định dạng không có prefix
+      if (!item) {
+        const found = this.vietnamAddressService.findWardByName(cleanWardName);
+        if (found) {
+          item = locationMap.get(found.name.toLowerCase());
+        }
+      }
+
+      // Nếu rule thuộc về địa phương khác chưa có trong master list (fallback bảo toàn dữ liệu cũ)
+      if (!item) {
+        item = {
           district: rule.district,
           ward: rule.ward,
           isSupported: true,
           supportedBranches: [],
-        });
+        };
+        locationMap.set(lowerKey, item);
       }
 
-      const item = locationMap.get(key)!;
+      item.isSupported = true;
       const branchData = {
         id: rule.branch.id,
         code: rule.branch.code,
@@ -108,12 +141,24 @@ export class ShippingService {
   // 4. Tính toán phí ship cho một cặp Phường/Xã và Chi nhánh
   async calculateShipping(dto: CalculateShippingDto) {
     const { district, ward, branchId } = dto;
+    const cleanWard = ward.trim();
+
+    // Điều kiện tìm kiếm theo tên phường (hỗ trợ cả case-insensitive và biến thể tên)
+    const wardConditions: Array<{ ward: { equals: string; mode: 'insensitive' } }> = [
+      { ward: { equals: cleanWard, mode: 'insensitive' } },
+    ];
+
+    const wardDef = this.vietnamAddressService.findWardByName(cleanWard);
+    if (wardDef && wardDef.name.toLowerCase() !== cleanWard.toLowerCase()) {
+      wardConditions.push({
+        ward: { equals: wardDef.name, mode: 'insensitive' },
+      });
+    }
 
     if (branchId) {
       const specificRule = await this.prisma.shippingRule.findFirst({
         where: {
-          district: district.trim(),
-          ward: ward.trim(),
+          OR: wardConditions,
           branchId,
           isActive: true,
         },
@@ -126,7 +171,7 @@ export class ShippingService {
 
       if (!specificRule) {
         throw new BadRequestException(
-          `Chi nhánh được chọn không hỗ trợ giao hàng tới ${ward}, ${district}`,
+          `Chi nhánh được chọn không hỗ trợ giao hàng tới ${cleanWard}`,
         );
       }
 
@@ -141,8 +186,7 @@ export class ShippingService {
     // Nếu không truyền branchId, ưu tiên lấy chi nhánh mặc định
     const defaultRule = await this.prisma.shippingRule.findFirst({
       where: {
-        district: district.trim(),
-        ward: ward.trim(),
+        OR: wardConditions,
         isDefault: true,
         isActive: true,
       },
@@ -165,8 +209,7 @@ export class ShippingService {
     // Nếu không có isDefault, lấy bất kỳ chi nhánh nào hỗ trợ khu vực này
     const anyRule = await this.prisma.shippingRule.findFirst({
       where: {
-        district: district.trim(),
-        ward: ward.trim(),
+        OR: wardConditions,
         isActive: true,
       },
       include: {
@@ -178,7 +221,7 @@ export class ShippingService {
 
     if (!anyRule) {
       throw new BadRequestException(
-        `Khu vực ${ward}, ${district} hiện chưa được hỗ trợ giao hàng tận nơi.`,
+        `Khu vực ${cleanWard} hiện chưa được hỗ trợ giao hàng tận nơi.`,
       );
     }
 
@@ -192,12 +235,19 @@ export class ShippingService {
 
   // 5. Thêm / cập nhật quy tắc phí ship (Admin)
   async upsertShippingRule(dto: CreateShippingRuleDto) {
-    // Nếu đặt là isDefault, bỏ cờ isDefault của các chi nhánh khác trong cùng ward/district
+    const cleanWard = dto.ward.trim();
+    let district = dto.district?.trim();
+
+    if (!district) {
+      const wardDef = this.vietnamAddressService.findWardByName(cleanWard);
+      district = wardDef ? wardDef.area : 'TP. Hồ Chí Minh';
+    }
+
+    // Nếu đặt là isDefault, bỏ cờ isDefault của các chi nhánh khác trong cùng ward
     if (dto.isDefault) {
       await this.prisma.shippingRule.updateMany({
         where: {
-          district: dto.district,
-          ward: dto.ward,
+          ward: cleanWard,
         },
         data: { isDefault: false },
       });
@@ -207,8 +257,8 @@ export class ShippingService {
       where: {
         branchId_district_ward: {
           branchId: dto.branchId,
-          district: dto.district,
-          ward: dto.ward,
+          district,
+          ward: cleanWard,
         },
       },
       update: {
@@ -219,8 +269,8 @@ export class ShippingService {
       create: {
         branchId: dto.branchId,
         province: dto.province || 'TP. Hồ Chí Minh',
-        district: dto.district,
-        ward: dto.ward,
+        district,
+        ward: cleanWard,
         fee: dto.fee,
         isDefault: dto.isDefault ?? false,
         isActive: dto.isActive ?? true,

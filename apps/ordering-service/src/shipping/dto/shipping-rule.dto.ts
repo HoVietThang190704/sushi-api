@@ -19,8 +19,8 @@ export class CreateShippingRuleDto {
   province?: string;
 
   @IsString()
-  @IsNotEmpty()
-  district!: string;
+  @IsOptional()
+  district?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -58,8 +58,8 @@ export class UpdateShippingRuleDto {
 
 export class CalculateShippingDto {
   @IsString()
-  @IsNotEmpty()
-  district!: string;
+  @IsOptional()
+  district?: string;
 
   @IsString()
   @IsNotEmpty()
