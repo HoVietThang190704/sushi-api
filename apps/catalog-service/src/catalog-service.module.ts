@@ -7,6 +7,8 @@ import { PrismaService } from './prisma.service';
 import { RolesGuard } from './guards/roles.guard';
 import { CloudinaryService } from '@common';
 import { RabbitMQModule } from '@common/rabbitmq';
+import { RedisModule } from '@common/redis';
+import { CatalogCacheService } from './catalog-cache.service';
 
 @Module({
   imports: [
@@ -16,6 +18,7 @@ import { RabbitMQModule } from '@common/rabbitmq';
     }),
     JwtModule.register({}),
     RabbitMQModule,
+    RedisModule,
   ],
   controllers: [CatalogServiceController],
   providers: [
@@ -23,6 +26,7 @@ import { RabbitMQModule } from '@common/rabbitmq';
     PrismaService,
     RolesGuard,
     CloudinaryService,
+    CatalogCacheService,
   ],
   exports: [
     CatalogServiceService,

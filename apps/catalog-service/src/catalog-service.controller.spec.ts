@@ -4,6 +4,7 @@ import { CatalogServiceService } from './catalog-service.service';
 import { CloudinaryService } from '@common';
 import { RabbitMQService } from '@common/rabbitmq';
 import { PrismaService } from './prisma.service';
+import { CatalogCacheService } from './catalog-cache.service';
 
 jest.mock('./guards/roles.guard', () => ({
   RolesGuard: jest.fn().mockImplementation(() => ({
@@ -39,6 +40,14 @@ describe('CatalogServiceController', () => {
           provide: RabbitMQService,
           useValue: {
             publishEvent: jest.fn().mockResolvedValue(true),
+          },
+        },
+        {
+          provide: CatalogCacheService,
+          useValue: {
+            remember: jest.fn(),
+            invalidateCategories: jest.fn(),
+            invalidateProducts: jest.fn(),
           },
         },
         {

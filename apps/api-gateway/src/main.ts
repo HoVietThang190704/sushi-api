@@ -6,7 +6,9 @@ import { AppModule } from './app.module';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import cookieParser from 'cookie-parser';
 import { JwtService } from '@nestjs/jwt';
-import type { Request } from 'express';
+import type { Express, Request } from 'express';
+import { RateLimitService } from './rate-limit/rate-limit.service';
+import { createRateLimitMiddleware } from './rate-limit/rate-limit.middleware';
 
 interface AuthenticatedRequest extends Request {
   cookies: Record<string, string>;
@@ -17,6 +19,16 @@ async function bootstrap() {
 
   // 1. Cấu hình đọc Cookie
   app.use(cookieParser());
+
+  // Never trust client-supplied forwarding headers unless the deployment has a known proxy hop count.
+  const proxyHops = Number(process.env.TRUSTED_PROXY_HOPS || '0');
+  if (Number.isInteger(proxyHops) && proxyHops > 0) {
+    (app.getHttpAdapter().getInstance() as Express).set(
+      'trust proxy',
+      proxyHops,
+    );
+  }
+  app.use(createRateLimitMiddleware(app.get(RateLimitService)));
 
   // 2. Cấu hình CORS: Cho phép localhost và toàn bộ dải IP mạng LAN để test trên điện thoại
   app.enableCors({

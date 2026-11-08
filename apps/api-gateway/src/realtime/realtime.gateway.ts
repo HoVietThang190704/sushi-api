@@ -154,13 +154,14 @@ export class RealtimeGateway
         .to(REALTIME_ROOMS.ADMIN)
         .emit('realtime:event', event);
     } else {
-      this.server.to(REALTIME_ROOMS.AUTHENTICATED).emit('realtime:event', event);
+      this.server
+        .to(REALTIME_ROOMS.AUTHENTICATED)
+        .emit('realtime:event', event);
     }
 
     // Broadcast to specific order room for customers/guests
     const orderCode = (event.payload?.orderCode || event.payload?.code) as
-      | string
-      | undefined;
+      string | undefined;
     if (orderCode && event.resource === 'order') {
       this.server.to(REALTIME_ROOMS.order(orderCode)).emit('order:updated', {
         orderCode,

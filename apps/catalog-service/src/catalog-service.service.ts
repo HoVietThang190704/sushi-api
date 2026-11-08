@@ -9,6 +9,7 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { Prisma } from '@prisma/client';
 import { RabbitMQService } from '@common/rabbitmq';
 import { createRealtimeEvent } from '@contracts';
+import { CatalogCacheService } from './catalog-cache.service';
 
 export function toSlug(str: string): string {
   return str
@@ -26,6 +27,7 @@ export class CatalogServiceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rabbitmqService: RabbitMQService,
+    private readonly cache: CatalogCacheService,
   ) {}
 
   // 1. Quản lý Danh mục (Categories)
@@ -48,6 +50,7 @@ export class CatalogServiceService {
         parent: true,
       },
     });
+    await this.cache.invalidateCategories();
 
     await this.rabbitmqService.publishEvent(
       createRealtimeEvent({
@@ -66,15 +69,17 @@ export class CatalogServiceService {
   }
 
   async getCategories() {
-    return this.prisma.productCategory.findMany({
-      include: {
-        children: true,
-        _count: {
-          select: { products: true },
+    return this.cache.remember('categories', 'all', () =>
+      this.prisma.productCategory.findMany({
+        include: {
+          children: true,
+          _count: {
+            select: { products: true },
+          },
         },
-      },
-      orderBy: { name: 'asc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+    );
   }
 
   // 2. Quản lý Sản phẩm (Products)
@@ -122,6 +127,10 @@ export class CatalogServiceService {
         category: true,
       },
     });
+    await Promise.all([
+      this.cache.invalidateProducts(),
+      this.cache.invalidateCategories(),
+    ]);
 
     await this.rabbitmqService.publishEvent(
       createRealtimeEvent({
@@ -141,16 +150,21 @@ export class CatalogServiceService {
   }
 
   async getProducts(categoryId?: string) {
-    return this.prisma.product.findMany({
-      where: {
-        isActive: true,
-        ...(categoryId ? { categoryId } : {}),
-      },
-      include: {
-        category: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.cache.remember(
+      'products',
+      categoryId ? `category:${categoryId}` : 'all',
+      () =>
+        this.prisma.product.findMany({
+          where: {
+            isActive: true,
+            ...(categoryId ? { categoryId } : {}),
+          },
+          include: {
+            category: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+    );
   }
 
   async getProductById(identifier: string) {
@@ -159,19 +173,24 @@ export class CatalogServiceService {
         identifier,
       );
 
-    const product = await this.prisma.product.findFirst({
-      where: isUuid
-        ? { OR: [{ id: identifier }, { slug: identifier }] }
-        : { slug: identifier },
-      include: {
-        category: true,
-        comboItemsAsParent: {
+    const product = await this.cache.remember(
+      'products',
+      `detail:${identifier}`,
+      () =>
+        this.prisma.product.findFirst({
+          where: isUuid
+            ? { OR: [{ id: identifier }, { slug: identifier }] }
+            : { slug: identifier },
           include: {
-            childProduct: true,
+            category: true,
+            comboItemsAsParent: {
+              include: {
+                childProduct: true,
+              },
+            },
           },
-        },
-      },
-    });
+        }),
+    );
 
     if (!product) {
       throw new NotFoundException('Product not found');
