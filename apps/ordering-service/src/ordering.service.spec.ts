@@ -519,6 +519,111 @@ describe('OrderingService - createOrder', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('should reject transitioning if order was already deducted concurrently', async () => {
+      const order = {
+        id: 'ord-conf-ded',
+        code: 'ORD-CONF-DED',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+        items: [{ productId: 'prod-1', productName: 'Salmon', quantity: 1 }],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-1',
+        warehouseId: 'wh-1',
+      } as any);
+      jest.spyOn(prisma.orderRecipeDeduction, 'findUnique').mockResolvedValue(null);
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        { id: 'prod-1', name: 'Salmon', type: 'SINGLE' } as any,
+      ]);
+      jest.spyOn(prisma.recipe, 'findUnique').mockResolvedValue({
+        id: 'rec-1',
+        productId: 'prod-1',
+        isActive: true,
+        items: [
+          {
+            ingredientId: 'ing-1',
+            quantity: 10 as any,
+            ingredient: { name: 'Cá hồi', unit: 'g' },
+          },
+        ],
+      } as any);
+      jest.spyOn(prisma.warehouseStock, 'findUnique').mockResolvedValue({
+        id: 'ws-1',
+        warehouseId: 'wh-1',
+        ingredientId: 'ing-1',
+        currentStock: 100 as any,
+      } as any);
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          order: {
+            findUnique: jest.fn().mockResolvedValue(order),
+          },
+          orderRecipeDeduction: {
+            findUnique: jest.fn().mockResolvedValue({ id: 'existing-ded' }),
+          },
+        });
+      });
+
+      await expect(
+        service.updateOrderStatus('ord-conf-ded', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject transitioning if order status changed concurrently during processing', async () => {
+      const order = {
+        id: 'ord-conf-race',
+        code: 'ORD-CONF-RACE',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+        items: [{ productId: 'prod-1', productName: 'Salmon', quantity: 1 }],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-1',
+        warehouseId: 'wh-1',
+      } as any);
+      jest.spyOn(prisma.orderRecipeDeduction, 'findUnique').mockResolvedValue(null);
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        { id: 'prod-1', name: 'Salmon', type: 'SINGLE' } as any,
+      ]);
+      jest.spyOn(prisma.recipe, 'findUnique').mockResolvedValue({
+        id: 'rec-1',
+        productId: 'prod-1',
+        isActive: true,
+        items: [
+          {
+            ingredientId: 'ing-1',
+            quantity: 10 as any,
+            ingredient: { name: 'Cá hồi', unit: 'g' },
+          },
+        ],
+      } as any);
+      jest.spyOn(prisma.warehouseStock, 'findUnique').mockResolvedValue({
+        id: 'ws-1',
+        warehouseId: 'wh-1',
+        ingredientId: 'ing-1',
+        currentStock: 100 as any,
+      } as any);
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          order: {
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ ...order, status: OrderStatus.CANCELLED }),
+          },
+        });
+      });
+
+      await expect(
+        service.updateOrderStatus('ord-conf-race', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it('should deduct warehouse stock and update order to PREPARING when stock is sufficient', async () => {
       const order = {
         id: 'ord-conf-4',

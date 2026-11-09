@@ -476,13 +476,35 @@ export class InventoryService {
       throw new NotFoundException(`Không tìm thấy nguyên liệu ID "${ingredientId}"`);
     }
 
-    const { transaction, updatedStockRecord, event } =
+    const { transaction, updatedStockRecord, outbox, event } =
       await this.prisma.$transaction(async (tx) => {
-        let currentStockRecord = await tx.warehouseStock.findUnique({
-          where: {
-            warehouseId_ingredientId: { warehouseId, ingredientId },
-          },
-        });
+        let currentStockRecord: {
+          id: string;
+          currentStock: any;
+          minStock?: any;
+        } | null = null;
+
+        if (tx.$queryRaw) {
+          const rows = await tx.$queryRaw<
+            Array<{ id: string; currentStock: any; minStock: any }>
+          >`
+            SELECT id, current_stock AS "currentStock", min_stock AS "minStock"
+            FROM inventory.warehouse_stocks
+            WHERE warehouse_id = ${warehouseId}::uuid AND ingredient_id = ${ingredientId}::uuid
+            FOR UPDATE
+          `;
+          if (rows.length > 0) {
+            currentStockRecord = rows[0];
+          }
+        }
+
+        if (!currentStockRecord) {
+          currentStockRecord = await tx.warehouseStock.findUnique({
+            where: {
+              warehouseId_ingredientId: { warehouseId, ingredientId },
+            },
+          });
+        }
 
         if (!currentStockRecord) {
           currentStockRecord = await tx.warehouseStock.create({
@@ -552,11 +574,38 @@ export class InventoryService {
           },
         });
 
-        return { transaction: txRecord, updatedStockRecord: updated, event };
+        let outbox = null;
+        if (tx.outboxEvent) {
+          outbox = await tx.outboxEvent.create({
+            data: {
+              aggregateType: 'warehouse_stock',
+              aggregateId: `${warehouseId}_${ingredientId}`,
+              eventType: event.type,
+              payload: event as unknown as Prisma.InputJsonValue,
+              status: OutboxStatus.PENDING,
+            },
+          });
+        }
+
+        return {
+          transaction: txRecord,
+          updatedStockRecord: updated,
+          outbox,
+          event,
+        };
       });
 
     try {
-      await this.rabbitmqService.publishEvent(event);
+      const published = await this.rabbitmqService.publishEvent(event);
+      if (published && outbox && this.prisma.outboxEvent) {
+        await this.prisma.outboxEvent.update({
+          where: { id: outbox.id },
+          data: {
+            status: OutboxStatus.PUBLISHED,
+            publishedAt: new Date(),
+          },
+        });
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(

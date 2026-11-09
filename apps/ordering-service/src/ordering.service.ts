@@ -15,6 +15,8 @@ import {
   PaymentStatus,
   TransactionType,
   TransactionReason,
+  OutboxStatus,
+  Prisma,
 } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
@@ -427,7 +429,11 @@ export class OrderingService {
 
         for (const item of orderItems) {
           const product = productMap.get(item.productId);
-          if (!product) continue;
+          if (!product) {
+            throw new BadRequestException(
+              `Sản phẩm "${item.productName || item.productId}" không tồn tại hoặc đã ngừng kinh doanh!`,
+            );
+          }
 
           if (product.type === 'SINGLE') {
             const recipe = await this.prisma.recipe.findUnique({
@@ -541,87 +547,136 @@ export class OrderingService {
     }
 
     // Thực hiện trong 1 transaction duy nhất: Khấu trừ tồn kho + Cập nhật trạng thái đơn
-    const updated = await this.prisma.$transaction(async (tx) => {
-      if (
-        toStatus === OrderStatus.PREPARING &&
-        warehouseId &&
-        Object.keys(requiredIngredientsMap).length > 0
-      ) {
-        // Trừ tồn kho và ghi phiếu xuất cho từng nguyên liệu
-        for (const req of Object.values(requiredIngredientsMap)) {
-          const currentStockRecord = await tx.warehouseStock.findUnique({
-            where: {
-              warehouseId_ingredientId: {
-                warehouseId,
-                ingredientId: req.ingredientId,
+    const { updatedOrder, outboxRecord, realtimeEvent } =
+      await this.prisma.$transaction(async (tx) => {
+        // Kiểm tra concurrency: đảm bảo trạng thái đơn không bị thay đổi bởi thao tác khác
+        const currentOrder = tx.order?.findUnique
+          ? await tx.order.findUnique({
+              where: { id: orderId },
+              select: { id: true, status: true, code: true, branchId: true },
+            })
+          : order;
+
+        if (!currentOrder || currentOrder.status !== order.status) {
+          throw new BadRequestException(
+            `Trạng thái đơn hàng ${order.code} đã bị thay đổi bởi thao tác khác (hiện tại: ${currentOrder?.status || 'Đã xoá'}). Vui lòng tải lại trang!`,
+          );
+        }
+
+        if (
+          toStatus === OrderStatus.PREPARING &&
+          warehouseId &&
+          Object.keys(requiredIngredientsMap).length > 0
+        ) {
+          // Đảm bảo idempotent trong transaction
+          const txExistingDeduction = tx.orderRecipeDeduction?.findUnique
+            ? await tx.orderRecipeDeduction.findUnique({
+                where: { orderId: order.id },
+              })
+            : null;
+          if (txExistingDeduction) {
+            throw new BadRequestException(
+              `Đơn hàng ${order.code} đã được khấu trừ kho trước đó!`,
+            );
+          }
+
+          // Sắp xếp nguyên liệu theo ingredientId để tránh deadlock khi nhiều đơn cùng trừ
+          const sortedIngredients = Object.values(requiredIngredientsMap).sort(
+            (a, b) => a.ingredientId.localeCompare(b.ingredientId),
+          );
+
+          // Khóa dòng và kiểm tra tồn kho chính xác trong transaction
+          for (const req of sortedIngredients) {
+            let currentStockRecord: { id: string; currentStock: any } | null =
+              null;
+            if (tx.$queryRaw) {
+              const rows = await tx.$queryRaw<
+                Array<{ id: string; currentStock: any }>
+              >`
+                SELECT id, current_stock AS "currentStock"
+                FROM inventory.warehouse_stocks
+                WHERE warehouse_id = ${warehouseId}::uuid AND ingredient_id = ${req.ingredientId}::uuid
+                FOR UPDATE
+              `;
+              if (rows.length > 0) {
+                currentStockRecord = rows[0];
+              }
+            } else {
+              currentStockRecord = await tx.warehouseStock.findUnique({
+                where: {
+                  warehouseId_ingredientId: {
+                    warehouseId,
+                    ingredientId: req.ingredientId,
+                  },
+                },
+              });
+            }
+
+            const cur = currentStockRecord
+              ? Number(currentStockRecord.currentStock)
+              : 0;
+            if (cur < req.quantity) {
+              throw new BadRequestException(
+                `Kho không đủ nguyên liệu "${req.name}" (Yêu cầu: ${req.quantity} ${req.unit}, Tồn thực tế: ${cur} ${req.unit})`,
+              );
+            }
+
+            const updatedStock = cur - req.quantity;
+
+            await tx.warehouseStock.update({
+              where: {
+                warehouseId_ingredientId: {
+                  warehouseId,
+                  ingredientId: req.ingredientId,
+                },
               },
-            },
-          });
-
-          const cur = currentStockRecord
-            ? Number(currentStockRecord.currentStock)
-            : 0;
-          const updatedStock = cur - req.quantity;
-
-          await tx.warehouseStock.update({
-            where: {
-              warehouseId_ingredientId: {
-                warehouseId,
-                ingredientId: req.ingredientId,
+              data: {
+                currentStock: updatedStock,
               },
-            },
-            data: {
-              currentStock: updatedStock,
-            },
-          });
+            });
 
-          await tx.inventoryTransaction.create({
+            await tx.inventoryTransaction.create({
+              data: {
+                code: this.generateTxCode(TransactionType.OUT),
+                type: TransactionType.OUT,
+                reason: TransactionReason.KITCHEN_USAGE,
+                warehouseId,
+                orderId: order.id,
+                ingredientId: req.ingredientId,
+                quantity: req.quantity,
+                note: `Xuất kho chế biến đơn hàng ${order.code}`,
+                createdBy: changedBy,
+              },
+            });
+          }
+
+          await tx.orderRecipeDeduction.create({
             data: {
-              code: this.generateTxCode(TransactionType.OUT),
-              type: TransactionType.OUT,
-              reason: TransactionReason.KITCHEN_USAGE,
-              warehouseId,
               orderId: order.id,
-              ingredientId: req.ingredientId,
-              quantity: req.quantity,
-              note: `Xuất kho chế biến đơn hàng ${order.code}`,
-              createdBy: changedBy,
+              orderCode: order.code,
+              warehouseId,
             },
           });
         }
 
-        await tx.orderRecipeDeduction.create({
+        const updated = await tx.order.update({
+          where: { id: orderId },
           data: {
-            orderId: order.id,
-            orderCode: order.code,
-            warehouseId,
+            status: toStatus,
           },
         });
-      }
 
-      const updatedOrder = await tx.order.update({
-        where: { id: orderId },
-        data: {
-          status: toStatus,
-        },
-      });
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId,
+            fromStatus: order.status,
+            toStatus,
+            reason,
+            changedBy,
+          },
+        });
 
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId,
-          fromStatus: order.status,
-          toStatus,
-          reason,
-          changedBy,
-        },
-      });
-
-      return updatedOrder;
-    });
-
-    try {
-      await this.rabbitmqService.publishEvent(
-        createRealtimeEvent({
+        const domainEvent = createRealtimeEvent({
           type: 'order.status.updated',
           resource: 'order',
           action: 'UPDATED',
@@ -634,8 +689,39 @@ export class OrderingService {
             reason,
             changedBy,
           },
-        }),
-      );
+        });
+
+        let outbox = null;
+        if (tx.outboxEvent) {
+          outbox = await tx.outboxEvent.create({
+            data: {
+              aggregateType: 'order',
+              aggregateId: updated.id,
+              eventType: domainEvent.type,
+              payload: domainEvent as unknown as Prisma.InputJsonValue,
+              status: OutboxStatus.PENDING,
+            },
+          });
+        }
+
+        return {
+          updatedOrder: updated,
+          outboxRecord: outbox,
+          realtimeEvent: domainEvent,
+        };
+      });
+
+    try {
+      const published = await this.rabbitmqService.publishEvent(realtimeEvent);
+      if (published && outboxRecord && this.prisma.outboxEvent) {
+        await this.prisma.outboxEvent.update({
+          where: { id: outboxRecord.id },
+          data: {
+            status: OutboxStatus.PUBLISHED,
+            publishedAt: new Date(),
+          },
+        });
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(
@@ -643,7 +729,7 @@ export class OrderingService {
       );
     }
 
-    return updated;
+    return updatedOrder;
   }
 
   async updatePaymentStatus(orderId: string, paymentStatus: PaymentStatus) {
