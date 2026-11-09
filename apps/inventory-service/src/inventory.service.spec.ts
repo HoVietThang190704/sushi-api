@@ -49,6 +49,21 @@ describe('InventoryService', () => {
               update: jest.fn(),
               upsert: jest.fn(),
             },
+            product: {
+              findUnique: jest.fn(),
+            },
+            recipe: {
+              findMany: jest.fn(),
+              findUnique: jest.fn(),
+              create: jest.fn(),
+              update: jest.fn(),
+              upsert: jest.fn(),
+              delete: jest.fn(),
+            },
+            recipeItem: {
+              deleteMany: jest.fn(),
+              createMany: jest.fn(),
+            },
             $transaction: jest.fn(),
             $queryRaw: jest.fn(),
           },
@@ -559,6 +574,97 @@ describe('InventoryService', () => {
           quantity: 50,
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Recipe (BOM) management', () => {
+    it('should throw BadRequestException if product is not found or is a COMBO', async () => {
+      (prisma.product.findUnique as jest.Mock).mockResolvedValue({
+        id: 'prod-combo',
+        type: 'COMBO',
+      });
+
+      await expect(
+        service.upsertRecipe({
+          productId: 'prod-combo',
+          items: [{ ingredientId: 'ing-1', quantity: 100 }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException if any ingredient in items does not exist', async () => {
+      (prisma.product.findUnique as jest.Mock).mockResolvedValue({
+        id: 'prod-1',
+        type: 'SINGLE',
+      });
+      (prisma.ingredient.findMany as jest.Mock).mockResolvedValue([]);
+
+      await expect(
+        service.upsertRecipe({
+          productId: 'prod-1',
+          items: [{ ingredientId: 'ing-nonexistent', quantity: 100 }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should upsert recipe and recipe items successfully', async () => {
+      (prisma.product.findUnique as jest.Mock).mockResolvedValue({
+        id: 'prod-1',
+        type: 'SINGLE',
+      });
+      (prisma.ingredient.findMany as jest.Mock).mockResolvedValue([
+        { id: 'ing-1', name: 'Ca hoi' },
+      ]);
+
+      const mockRecipe = {
+        id: 'rec-1',
+        productId: 'prod-1',
+        notes: 'Chuan',
+        isActive: true,
+      };
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          recipe: {
+            upsert: jest.fn().mockResolvedValue(mockRecipe),
+          },
+          recipeItem: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+            createMany: jest.fn().mockResolvedValue({ count: 1 }),
+          },
+        });
+      });
+
+      const result = await service.upsertRecipe({
+        productId: 'prod-1',
+        notes: 'Chuan',
+        items: [{ ingredientId: 'ing-1', quantity: 100 }],
+      });
+
+      expect(result).toEqual(mockRecipe);
+    });
+
+    it('should return recipe by product id', async () => {
+      const mockRecipe = {
+        id: 'rec-1',
+        productId: 'prod-1',
+        items: [
+          {
+            id: 'item-1',
+            ingredientId: 'ing-1',
+            quantity: 100 as any,
+            ingredient: { name: 'Ca hoi', unit: 'g' },
+          },
+        ],
+      };
+
+      (prisma.recipe.findUnique as jest.Mock).mockResolvedValue(mockRecipe);
+
+      const result = await service.getRecipeByProduct('prod-1');
+      expect(result).toEqual(mockRecipe);
+      expect(prisma.recipe.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { productId: 'prod-1' } }),
+      );
     });
   });
 });

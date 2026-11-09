@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Query, Param } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Query, Param } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 
 @Controller('inventory')
 export class InventoryController {
@@ -61,5 +62,25 @@ export class InventoryController {
       ingredientId,
       dto,
     );
+  }
+
+  @Get('recipes')
+  getRecipes() {
+    return this.inventoryService.getRecipes();
+  }
+
+  @Get('recipes/product/:productId')
+  getRecipeByProduct(@Param('productId') productId: string) {
+    return this.inventoryService.getRecipeByProduct(productId);
+  }
+
+  @Post('recipes')
+  upsertRecipe(@Body() dto: UpsertRecipeDto) {
+    return this.inventoryService.upsertRecipe(dto);
+  }
+
+  @Delete('recipes/:id')
+  deleteRecipe(@Param('id') id: string) {
+    return this.inventoryService.deleteRecipe(id);
   }
 }

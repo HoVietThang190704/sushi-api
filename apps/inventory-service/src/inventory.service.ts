@@ -10,6 +10,7 @@ import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import {
   TransactionType,
   TransactionReason,
@@ -567,5 +568,134 @@ export class InventoryService {
       transaction,
       stock: updatedStockRecord,
     };
+  }
+
+  // ==========================================
+  // RECIPES (BOM)
+  // ==========================================
+
+  async getRecipes() {
+    return this.prisma.recipe.findMany({
+      where: { isActive: true },
+      include: {
+        product: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            sellingPrice: true,
+            imageUrl: true,
+            type: true,
+          },
+        },
+        items: {
+          include: {
+            ingredient: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                unit: true,
+                costPrice: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getRecipeByProduct(productId: string) {
+    return this.prisma.recipe.findUnique({
+      where: { productId },
+      include: {
+        product: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            sellingPrice: true,
+            type: true,
+          },
+        },
+        items: {
+          include: {
+            ingredient: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                unit: true,
+                costPrice: true,
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async upsertRecipe(dto: UpsertRecipeDto) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+    });
+    if (!product) {
+      throw new BadRequestException(
+        `Không tìm thấy món ăn ID "${dto.productId}"`,
+      );
+    }
+
+    if (product.type === 'COMBO') {
+      throw new BadRequestException(
+        `Không thể tạo công thức trực tiếp cho sản phẩm COMBO ("${product.name || product.id}"). Công thức được tự động suy diễn từ các món đơn thành phần!`,
+      );
+    }
+
+    // Verify all ingredients exist
+    const ingredientIds = dto.items.map((i) => i.ingredientId);
+    const existingIngredients = await this.prisma.ingredient.findMany({
+      where: { id: { in: ingredientIds } },
+    });
+    if (existingIngredients.length !== ingredientIds.length) {
+      throw new BadRequestException(
+        'Một hoặc nhiều nguyên liệu trong công thức không tồn tại',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const recipe = await tx.recipe.upsert({
+        where: { productId: dto.productId },
+        update: {
+          notes: dto.notes,
+          isActive: true,
+        },
+        create: {
+          productId: dto.productId,
+          notes: dto.notes,
+          isActive: true,
+        },
+      });
+
+      await tx.recipeItem.deleteMany({
+        where: { recipeId: recipe.id },
+      });
+
+      await tx.recipeItem.createMany({
+        data: dto.items.map((item) => ({
+          recipeId: recipe.id,
+          ingredientId: item.ingredientId,
+          quantity: item.quantity,
+        })),
+      });
+
+      return recipe;
+    });
+  }
+
+  async deleteRecipe(id: string) {
+    return this.prisma.recipe.delete({
+      where: { id },
+    });
   }
 }
