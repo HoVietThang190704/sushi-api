@@ -42,6 +42,7 @@ export class InventoryService {
       where: { isActive: true },
       orderBy: { createdAt: 'desc' },
       include: {
+        warehouseStocks: true,
         _count: {
           select: { transactions: true },
         },
@@ -49,7 +50,14 @@ export class InventoryService {
     });
 
     return items.map((item) => {
-      const stock = Number(item.currentStock);
+      const hasWarehouseStocks =
+        item.warehouseStocks && item.warehouseStocks.length > 0;
+      const stock = hasWarehouseStocks
+        ? item.warehouseStocks.reduce(
+            (sum, ws) => sum + Number(ws.currentStock),
+            0,
+          )
+        : Number(item.currentStock);
       const min = Number(item.minStock);
 
       let status: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'SAFE' = 'SAFE';
@@ -174,6 +182,7 @@ export class InventoryService {
           unit: string;
           currentStock: number | Prisma.Decimal;
           costPrice: number | Prisma.Decimal;
+          minStock?: number | Prisma.Decimal;
         } | null = null;
 
         // Lock row in PostgreSQL to prevent concurrent race condition
@@ -187,9 +196,10 @@ export class InventoryService {
                 unit: string;
                 currentStock: number | Prisma.Decimal;
                 costPrice: number | Prisma.Decimal;
+                minStock?: number | Prisma.Decimal;
               }>
             >`
-            SELECT id, code, name, unit, current_stock AS "currentStock", cost_price AS "costPrice"
+            SELECT id, code, name, unit, current_stock AS "currentStock", cost_price AS "costPrice", min_stock AS "minStock"
             FROM inventory.ingredients
             WHERE id = ${dto.ingredientId}::uuid
             FOR UPDATE
@@ -235,11 +245,21 @@ export class InventoryService {
         const totalAmount = qty * unitPrice;
         const code = this.generateCode(dto.type);
 
+        let targetWarehouseId = dto.warehouseId;
+        if (!targetWarehouseId && tx.warehouse?.findFirst) {
+          const defaultWh = await tx.warehouse.findFirst({
+            where: { isActive: true },
+            orderBy: { createdAt: 'asc' },
+          });
+          targetWarehouseId = defaultWh?.id;
+        }
+
         const txRecord = await tx.inventoryTransaction.create({
           data: {
             code,
             type: dto.type,
             reason: dto.reason,
+            warehouseId: targetWarehouseId,
             ingredientId: dto.ingredientId,
             quantity: qty,
             unitPrice,
@@ -251,6 +271,45 @@ export class InventoryService {
             ingredient: true,
           },
         });
+
+        if (targetWarehouseId && tx.warehouseStock) {
+          let ws = tx.warehouseStock.findUnique
+            ? await tx.warehouseStock.findUnique({
+                where: {
+                  warehouseId_ingredientId: {
+                    warehouseId: targetWarehouseId,
+                    ingredientId: dto.ingredientId,
+                  },
+                },
+              })
+            : null;
+
+          if (!ws && tx.warehouseStock.create) {
+            ws = await tx.warehouseStock.create({
+              data: {
+                warehouseId: targetWarehouseId,
+                ingredientId: dto.ingredientId,
+                currentStock: 0,
+                minStock: ingredient.minStock || 0,
+              },
+            });
+          }
+
+          if (ws && tx.warehouseStock.update) {
+            const curWs = Number(ws.currentStock);
+            const newWs =
+              dto.type === TransactionType.IN ? curWs + qty : curWs - qty;
+            await tx.warehouseStock.update({
+              where: {
+                warehouseId_ingredientId: {
+                  warehouseId: targetWarehouseId,
+                  ingredientId: dto.ingredientId,
+                },
+              },
+              data: { currentStock: newWs },
+            });
+          }
+        }
 
         const updatedStock =
           dto.type === TransactionType.IN
@@ -559,6 +618,16 @@ export class InventoryService {
             currentStock: newStock,
           },
         });
+
+        if (tx.ingredient?.update) {
+          const delta = dto.type === TransactionType.IN ? qty : -qty;
+          await tx.ingredient.update({
+            where: { id: ingredientId },
+            data: {
+              currentStock: { increment: delta },
+            },
+          });
+        }
 
         const event = createRealtimeEvent({
           type: 'inventory.stock.updated',

@@ -635,6 +635,15 @@ export class OrderingService {
               },
             });
 
+            if (tx.ingredient?.update) {
+              await tx.ingredient.update({
+                where: { id: req.ingredientId },
+                data: {
+                  currentStock: { decrement: req.quantity },
+                },
+              });
+            }
+
             await tx.inventoryTransaction.create({
               data: {
                 code: this.generateTxCode(TransactionType.OUT),

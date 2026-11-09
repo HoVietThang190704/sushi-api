@@ -22,6 +22,10 @@ export class CreateTransactionDto {
   @IsNotEmpty()
   ingredientId: string;
 
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
   @IsNumber()
   @Min(0.001)
   quantity: number;
