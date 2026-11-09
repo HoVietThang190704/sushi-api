@@ -10,7 +10,12 @@ import { ShippingService } from './shipping/shipping.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RabbitMQService } from '@common/rabbitmq';
 import { createRealtimeEvent, ORDER_TRACK_SCOPE } from '@contracts';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentStatus,
+  TransactionType,
+  TransactionReason,
+} from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 
@@ -345,6 +350,14 @@ export class OrderingService {
     return updated;
   }
 
+  private generateTxCode(type: TransactionType): string {
+    const prefix = type === TransactionType.IN ? 'PNK' : 'PXK';
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    return `${prefix}-${dateStr}-${rand}`;
+  }
+
   async updateOrderStatus(
     orderId: string,
     toStatus: OrderStatus,
@@ -353,13 +366,239 @@ export class OrderingService {
   ) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
+      include: {
+        items: true,
+      },
     });
 
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn hàng có ID "${orderId}"`);
     }
 
+    // 1. Kiểm tra ràng buộc chuyển trạng thái nghiêm ngặt sang PREPARING
+    let warehouseId: string | null = null;
+    const requiredIngredientsMap: Record<
+      string,
+      { ingredientId: string; name: string; unit: string; quantity: number }
+    > = {};
+
+    if (toStatus === OrderStatus.PREPARING) {
+      if (order.status !== OrderStatus.CONFIRMED) {
+        throw new BadRequestException(
+          `Đơn hàng cần được Xác nhận (CONFIRMED) trước khi bắt đầu chế biến. Trạng thái hiện tại: ${order.status}`,
+        );
+      }
+
+      // Kiểm tra xem đơn đã từng được trừ kho trước đó chưa (idempotent)
+      const existingDeduction =
+        await this.prisma.orderRecipeDeduction.findUnique({
+          where: { orderId: order.id },
+        });
+
+      if (!existingDeduction) {
+        // Lấy chi nhánh và kho phụ trách
+        const branch = await this.prisma.branch.findUnique({
+          where: { id: order.branchId },
+          include: { warehouse: true },
+        });
+
+        if (!branch || !branch.warehouseId) {
+          throw new BadRequestException(
+            `Chi nhánh phục vụ đơn hàng (${branch?.name || order.branchId}) chưa được cấu hình Kho nguyên vật liệu!`,
+          );
+        }
+        warehouseId = branch.warehouseId;
+        const warehouseName = branch.warehouse?.name || 'Kho chi nhánh';
+
+        // Phân rã giỏ hàng và tính định mức công thức
+        const orderItems = order.items || [];
+        const productIds = orderItems.map((i) => i.productId);
+        const products = await this.prisma.product.findMany({
+          where: { id: { in: productIds } },
+          include: {
+            comboItemsAsParent: {
+              include: {
+                childProduct: true,
+              },
+            },
+          },
+        });
+        const productMap = new Map(products.map((p) => [p.id, p]));
+
+        for (const item of orderItems) {
+          const product = productMap.get(item.productId);
+          if (!product) continue;
+
+          if (product.type === 'SINGLE') {
+            const recipe = await this.prisma.recipe.findUnique({
+              where: { productId: product.id },
+              include: {
+                items: {
+                  include: { ingredient: true },
+                },
+              },
+            });
+
+            if (!recipe || !recipe.isActive || recipe.items.length === 0) {
+              throw new BadRequestException(
+                `Món ăn "${item.productName || product.name}" chưa có công thức định mức nguyên vật liệu!`,
+              );
+            }
+
+            for (const rItem of recipe.items) {
+              const ingId = rItem.ingredientId;
+              const needed = Number(rItem.quantity) * item.quantity;
+              if (!requiredIngredientsMap[ingId]) {
+                requiredIngredientsMap[ingId] = {
+                  ingredientId: ingId,
+                  name: rItem.ingredient?.name || ingId,
+                  unit: rItem.ingredient?.unit || '',
+                  quantity: 0,
+                };
+              }
+              requiredIngredientsMap[ingId].quantity += needed;
+            }
+          } else if (product.type === 'COMBO') {
+            for (const cItem of product.comboItemsAsParent) {
+              const childQty = item.quantity * Number(cItem.quantity);
+              const childRecipe = await this.prisma.recipe.findUnique({
+                where: { productId: cItem.childProductId },
+                include: {
+                  items: {
+                    include: { ingredient: true },
+                  },
+                },
+              });
+
+              if (
+                !childRecipe ||
+                !childRecipe.isActive ||
+                childRecipe.items.length === 0
+              ) {
+                throw new BadRequestException(
+                  `Món con "${cItem.childProduct?.name || cItem.childProductId}" trong combo "${item.productName}" chưa có công thức định mức!`,
+                );
+              }
+
+              for (const rItem of childRecipe.items) {
+                const ingId = rItem.ingredientId;
+                const needed = Number(rItem.quantity) * childQty;
+                if (!requiredIngredientsMap[ingId]) {
+                  requiredIngredientsMap[ingId] = {
+                    ingredientId: ingId,
+                    name: rItem.ingredient?.name || ingId,
+                    unit: rItem.ingredient?.unit || '',
+                    quantity: 0,
+                  };
+                }
+                requiredIngredientsMap[ingId].quantity += needed;
+              }
+            }
+          }
+        }
+
+        // Kiểm tra tồn kho tại WarehouseStock
+        const insufficientList: Array<{
+          name: string;
+          required: number;
+          available: number;
+          unit: string;
+        }> = [];
+
+        for (const req of Object.values(requiredIngredientsMap)) {
+          const stockRecord = await this.prisma.warehouseStock.findUnique({
+            where: {
+              warehouseId_ingredientId: {
+                warehouseId,
+                ingredientId: req.ingredientId,
+              },
+            },
+          });
+
+          const available = stockRecord ? Number(stockRecord.currentStock) : 0;
+          if (available < req.quantity) {
+            insufficientList.push({
+              name: req.name,
+              required: req.quantity,
+              available,
+              unit: req.unit,
+            });
+          }
+        }
+
+        if (insufficientList.length > 0) {
+          const detailMsg = insufficientList
+            .map(
+              (i) =>
+                `• ${i.name}: Cần ${i.required} ${i.unit}, Hiện có ${i.available} ${i.unit}`,
+            )
+            .join('; ');
+          throw new BadRequestException(
+            `Kho "${warehouseName}" không đủ nguyên vật liệu để chế biến đơn hàng ${order.code}: ${detailMsg}`,
+          );
+        }
+      }
+    }
+
+    // Thực hiện trong 1 transaction duy nhất: Khấu trừ tồn kho + Cập nhật trạng thái đơn
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (
+        toStatus === OrderStatus.PREPARING &&
+        warehouseId &&
+        Object.keys(requiredIngredientsMap).length > 0
+      ) {
+        // Trừ tồn kho và ghi phiếu xuất cho từng nguyên liệu
+        for (const req of Object.values(requiredIngredientsMap)) {
+          const currentStockRecord = await tx.warehouseStock.findUnique({
+            where: {
+              warehouseId_ingredientId: {
+                warehouseId,
+                ingredientId: req.ingredientId,
+              },
+            },
+          });
+
+          const cur = currentStockRecord
+            ? Number(currentStockRecord.currentStock)
+            : 0;
+          const updatedStock = cur - req.quantity;
+
+          await tx.warehouseStock.update({
+            where: {
+              warehouseId_ingredientId: {
+                warehouseId,
+                ingredientId: req.ingredientId,
+              },
+            },
+            data: {
+              currentStock: updatedStock,
+            },
+          });
+
+          await tx.inventoryTransaction.create({
+            data: {
+              code: this.generateTxCode(TransactionType.OUT),
+              type: TransactionType.OUT,
+              reason: TransactionReason.KITCHEN_USAGE,
+              warehouseId,
+              orderId: order.id,
+              ingredientId: req.ingredientId,
+              quantity: req.quantity,
+              note: `Xuất kho chế biến đơn hàng ${order.code}`,
+              createdBy: changedBy,
+            },
+          });
+        }
+
+        await tx.orderRecipeDeduction.create({
+          data: {
+            orderId: order.id,
+            orderCode: order.code,
+            warehouseId,
+          },
+        });
+      }
+
       const updatedOrder = await tx.order.update({
         where: { id: orderId },
         data: {

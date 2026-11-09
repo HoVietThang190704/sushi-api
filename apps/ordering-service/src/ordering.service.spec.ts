@@ -37,6 +37,23 @@ describe('OrderingService - createOrder', () => {
             orderStatusHistory: {
               create: jest.fn(),
             },
+            branch: {
+              findUnique: jest.fn(),
+            },
+            recipe: {
+              findUnique: jest.fn(),
+            },
+            warehouseStock: {
+              findUnique: jest.fn(),
+              update: jest.fn(),
+            },
+            inventoryTransaction: {
+              create: jest.fn(),
+            },
+            orderRecipeDeduction: {
+              findUnique: jest.fn(),
+              create: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
         },
@@ -372,7 +389,7 @@ describe('OrderingService - createOrder', () => {
 
       const updatedOrder = {
         ...order,
-        status: OrderStatus.PREPARING,
+        status: OrderStatus.CONFIRMED,
       };
 
       jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
@@ -389,17 +406,215 @@ describe('OrderingService - createOrder', () => {
 
       const result = await service.updateOrderStatus(
         'ord-staff-1',
+        OrderStatus.CONFIRMED,
+        'Xac nhan don hang',
+        'STAFF_01',
+      );
+
+      expect(result.status).toBe(OrderStatus.CONFIRMED);
+    });
+
+    it('should reject transitioning to PREPARING if current status is PENDING (must be CONFIRMED first)', async () => {
+      const order = {
+        id: 'ord-pending-1',
+        code: 'ORD-PENDING-01',
+        status: OrderStatus.PENDING,
+        branchId: 'branch-1',
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+
+      await expect(
+        service.updateOrderStatus('ord-pending-1', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject transitioning to PREPARING if branch has no warehouse assigned', async () => {
+      const order = {
+        id: 'ord-conf-1',
+        code: 'ORD-CONF-01',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-no-wh',
+        items: [{ productId: 'prod-1', productName: 'Salmon', quantity: 1 }],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-no-wh',
+        warehouseId: null,
+      } as any);
+
+      await expect(
+        service.updateOrderStatus('ord-conf-1', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject transitioning to PREPARING if any product is missing recipe', async () => {
+      const order = {
+        id: 'ord-conf-2',
+        code: 'ORD-CONF-02',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+        items: [{ productId: 'prod-no-recipe', productName: 'Tuna Roll', quantity: 2 }],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-1',
+        warehouseId: 'wh-1',
+        warehouse: { name: 'Kho 1' },
+      } as any);
+      jest.spyOn(prisma.orderRecipeDeduction, 'findUnique').mockResolvedValue(null);
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        { id: 'prod-no-recipe', name: 'Tuna Roll', type: 'SINGLE' } as any,
+      ]);
+      jest.spyOn(prisma.recipe, 'findUnique').mockResolvedValue(null);
+
+      await expect(
+        service.updateOrderStatus('ord-conf-2', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject transitioning to PREPARING if warehouse stock is insufficient', async () => {
+      const order = {
+        id: 'ord-conf-3',
+        code: 'ORD-CONF-03',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+        items: [{ productId: 'prod-1', productName: 'Salmon Nigiri', quantity: 2 }],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-1',
+        warehouseId: 'wh-1',
+        warehouse: { name: 'Kho 1' },
+      } as any);
+      jest.spyOn(prisma.orderRecipeDeduction, 'findUnique').mockResolvedValue(null);
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        { id: 'prod-1', name: 'Salmon Nigiri', type: 'SINGLE' } as any,
+      ]);
+      jest.spyOn(prisma.recipe, 'findUnique').mockResolvedValue({
+        id: 'rec-1',
+        productId: 'prod-1',
+        isActive: true,
+        items: [
+          {
+            ingredientId: 'ing-salmon',
+            quantity: 50 as any,
+            ingredient: { name: 'Cá hồi', unit: 'g' },
+          },
+        ],
+      } as any);
+
+      jest.spyOn(prisma.warehouseStock, 'findUnique').mockResolvedValue({
+        id: 'ws-1',
+        warehouseId: 'wh-1',
+        ingredientId: 'ing-salmon',
+        currentStock: 40 as any,
+      } as any);
+
+      await expect(
+        service.updateOrderStatus('ord-conf-3', OrderStatus.PREPARING),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should deduct warehouse stock and update order to PREPARING when stock is sufficient', async () => {
+      const order = {
+        id: 'ord-conf-4',
+        code: 'ORD-CONF-04',
+        status: OrderStatus.CONFIRMED,
+        branchId: 'branch-1',
+        items: [{ productId: 'prod-1', productName: 'Salmon Nigiri', quantity: 2 }],
+      };
+
+      const updatedOrder = {
+        ...order,
+        status: OrderStatus.PREPARING,
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: 'branch-1',
+        warehouseId: 'wh-1',
+        warehouse: { name: 'Kho 1' },
+      } as any);
+      jest.spyOn(prisma.orderRecipeDeduction, 'findUnique').mockResolvedValue(null);
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        { id: 'prod-1', name: 'Salmon Nigiri', type: 'SINGLE' } as any,
+      ]);
+      jest.spyOn(prisma.recipe, 'findUnique').mockResolvedValue({
+        id: 'rec-1',
+        productId: 'prod-1',
+        isActive: true,
+        items: [
+          {
+            ingredientId: 'ing-salmon',
+            quantity: 50 as any,
+            ingredient: { name: 'Cá hồi', unit: 'g' },
+          },
+        ],
+      } as any);
+
+      const mockStock = {
+        id: 'ws-1',
+        warehouseId: 'wh-1',
+        ingredientId: 'ing-salmon',
+        currentStock: 500 as any,
+      };
+      jest.spyOn(prisma.warehouseStock, 'findUnique').mockResolvedValue(mockStock as any);
+
+      const updateStockMock = jest.fn().mockResolvedValue({ ...mockStock, currentStock: 400 });
+      const createTxMock = jest.fn().mockResolvedValue({ id: 'tx-1' });
+      const createDeductionMock = jest.fn().mockResolvedValue({ id: 'ded-1' });
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          warehouseStock: {
+            findUnique: jest.fn().mockResolvedValue(mockStock),
+            update: updateStockMock,
+          },
+          inventoryTransaction: {
+            create: createTxMock,
+          },
+          orderRecipeDeduction: {
+            create: createDeductionMock,
+          },
+          order: {
+            update: jest.fn().mockResolvedValue(updatedOrder),
+          },
+          orderStatusHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'hist-1' }),
+          },
+        });
+      });
+
+      const result = await service.updateOrderStatus(
+        'ord-conf-4',
         OrderStatus.PREPARING,
-        'Bep bat dau lam',
-        'CHEF_01',
+        'Bếp bắt đầu chế biến',
+        'CHEF',
       );
 
       expect(result.status).toBe(OrderStatus.PREPARING);
+      expect(updateStockMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { currentStock: 400 },
+        }),
+      );
+      expect(createDeductionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            orderId: 'ord-conf-4',
+            warehouseId: 'wh-1',
+          }),
+        }),
+      );
       expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'order.status.updated',
           payload: expect.objectContaining({
-            orderId: 'ord-staff-1',
+            orderId: 'ord-conf-4',
             status: OrderStatus.PREPARING,
           }),
         }),
