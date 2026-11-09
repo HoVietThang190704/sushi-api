@@ -8,6 +8,8 @@ import { PrismaService } from './prisma.service';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
+import { CreateWarehouseDto } from './dto/create-warehouse.dto';
+import { AdjustStockDto } from './dto/adjust-stock.dto';
 import {
   TransactionType,
   TransactionReason,
@@ -371,5 +373,199 @@ export class InventoryService {
     }
 
     return successCount;
+  }
+
+  // ==========================================
+  // WAREHOUSES & WAREHOUSE STOCKS
+  // ==========================================
+
+  async getWarehouses() {
+    return this.prisma.warehouse.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: {
+            stocks: true,
+            branches: true,
+          },
+        },
+      },
+    });
+  }
+
+  async createWarehouse(dto: CreateWarehouseDto) {
+    const existing = await this.prisma.warehouse.findUnique({
+      where: { code: dto.code.trim().toUpperCase() },
+    });
+    if (existing) {
+      throw new BadRequestException(`Mã kho "${dto.code}" đã tồn tại!`);
+    }
+
+    return this.prisma.warehouse.create({
+      data: {
+        code: dto.code.trim().toUpperCase(),
+        name: dto.name.trim(),
+        address: dto.address?.trim() || null,
+        isActive: true,
+      },
+    });
+  }
+
+  async getWarehouseStocks(warehouseId: string) {
+    const stocks = await this.prisma.warehouseStock.findMany({
+      where: { warehouseId },
+      include: {
+        ingredient: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            unit: true,
+            costPrice: true,
+            isActive: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return stocks.map((s) => {
+      const stock = Number(s.currentStock);
+      const min = Number(s.minStock);
+
+      let status: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'SAFE' = 'SAFE';
+      if (stock <= 0) {
+        status = 'OUT_OF_STOCK';
+      } else if (stock <= min) {
+        status = 'LOW_STOCK';
+      }
+
+      return {
+        ...s,
+        currentStock: stock,
+        minStock: min,
+        status,
+        isAlert: status !== 'SAFE',
+      };
+    });
+  }
+
+  async adjustWarehouseStock(
+    warehouseId: string,
+    ingredientId: string,
+    dto: AdjustStockDto,
+  ) {
+    const qty = Number(dto.quantity);
+    if (qty <= 0) {
+      throw new BadRequestException('Số lượng điều chỉnh phải lớn hơn 0');
+    }
+
+    const warehouse = await this.prisma.warehouse.findUnique({
+      where: { id: warehouseId },
+    });
+    if (!warehouse) {
+      throw new NotFoundException(`Không tìm thấy kho ID "${warehouseId}"`);
+    }
+
+    const ingredient = await this.prisma.ingredient.findUnique({
+      where: { id: ingredientId },
+    });
+    if (!ingredient) {
+      throw new NotFoundException(`Không tìm thấy nguyên liệu ID "${ingredientId}"`);
+    }
+
+    const { transaction, updatedStockRecord, event } =
+      await this.prisma.$transaction(async (tx) => {
+        let currentStockRecord = await tx.warehouseStock.findUnique({
+          where: {
+            warehouseId_ingredientId: { warehouseId, ingredientId },
+          },
+        });
+
+        if (!currentStockRecord) {
+          currentStockRecord = await tx.warehouseStock.create({
+            data: {
+              warehouseId,
+              ingredientId,
+              currentStock: 0,
+              minStock: ingredient.minStock,
+            },
+          });
+        }
+
+        const currentStock = Number(currentStockRecord.currentStock);
+        if (dto.type === TransactionType.OUT && currentStock < qty) {
+          throw new BadRequestException(
+            `Kho "${warehouse.name || warehouse.code}" không đủ tồn nguyên liệu "${ingredient.name || ingredient.code}" để xuất! Tồn hiện tại: ${currentStock} ${ingredient.unit}, yêu cầu xuất: ${qty} ${ingredient.unit}`,
+          );
+        }
+
+        const unitPrice =
+          dto.unitPrice !== undefined
+            ? Number(dto.unitPrice)
+            : Number(ingredient.costPrice);
+        const totalAmount = qty * unitPrice;
+        const code = this.generateCode(dto.type);
+
+        const txRecord = await tx.inventoryTransaction.create({
+          data: {
+            code,
+            type: dto.type,
+            reason: dto.reason,
+            warehouseId,
+            ingredientId,
+            quantity: qty,
+            unitPrice,
+            totalAmount,
+            note: dto.note,
+            createdBy: dto.createdBy || 'ADMIN',
+          },
+        });
+
+        const newStock =
+          dto.type === TransactionType.IN
+            ? currentStock + qty
+            : currentStock - qty;
+
+        const updated = await tx.warehouseStock.update({
+          where: {
+            warehouseId_ingredientId: { warehouseId, ingredientId },
+          },
+          data: {
+            currentStock: newStock,
+          },
+        });
+
+        const event = createRealtimeEvent({
+          type: 'inventory.stock.updated',
+          resource: 'inventory',
+          action: 'UPDATED',
+          payload: {
+            code: txRecord.code,
+            warehouseId,
+            ingredientId,
+            type: dto.type,
+            quantity: qty,
+            currentStock: newStock,
+          },
+        });
+
+        return { transaction: txRecord, updatedStockRecord: updated, event };
+      });
+
+    try {
+      await this.rabbitmqService.publishEvent(event);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `RabbitMQ publish failed for warehouse stock update: ${message}`,
+      );
+    }
+
+    return {
+      transaction,
+      stock: updatedStockRecord,
+    };
   }
 }

@@ -37,6 +37,18 @@ describe('InventoryService', () => {
               update: jest.fn(),
               findMany: jest.fn(),
             },
+            warehouse: {
+              findMany: jest.fn(),
+              findUnique: jest.fn(),
+              create: jest.fn(),
+            },
+            warehouseStock: {
+              findMany: jest.fn(),
+              findUnique: jest.fn(),
+              create: jest.fn(),
+              update: jest.fn(),
+              upsert: jest.fn(),
+            },
             $transaction: jest.fn(),
             $queryRaw: jest.fn(),
           },
@@ -415,6 +427,138 @@ describe('InventoryService', () => {
           },
         }),
       );
+    });
+  });
+
+  describe('Warehouse & WarehouseStock management', () => {
+    it('should return list of warehouses', async () => {
+      const mockWarehouses = [
+        {
+          id: 'wh-1',
+          code: 'KHO-01',
+          name: 'Kho Q1',
+          address: '12 Le Thanh Ton',
+          isActive: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          _count: { stocks: 5, branches: 1 },
+        },
+      ];
+
+      (prisma.warehouse.findMany as jest.Mock).mockResolvedValue(mockWarehouses);
+
+      const result = await service.getWarehouses();
+      expect(result).toEqual(mockWarehouses);
+      expect(prisma.warehouse.findMany).toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when creating warehouse with existing code', async () => {
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({
+        id: 'wh-1',
+        code: 'KHO-01',
+      });
+
+      await expect(
+        service.createWarehouse({
+          code: 'KHO-01',
+          name: 'Kho duplicate',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should create warehouse successfully', async () => {
+      const created = {
+        id: 'wh-2',
+        code: 'KHO-BT',
+        name: 'Kho Binh Thanh',
+        address: '45 D2',
+        isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.warehouse.create as jest.Mock).mockResolvedValue(created);
+
+      const result = await service.createWarehouse({
+        code: 'KHO-BT',
+        name: 'Kho Binh Thanh',
+        address: '45 D2',
+      });
+
+      expect(result).toEqual(created);
+    });
+
+    it('should return stocks for a given warehouse', async () => {
+      const mockStocks = [
+        {
+          id: 'ws-1',
+          warehouseId: 'wh-1',
+          ingredientId: 'ing-1',
+          currentStock: 100 as any,
+          minStock: 10 as any,
+          ingredient: {
+            code: 'NL-CA-HOI',
+            name: 'Ca hoi',
+            unit: 'g',
+            costPrice: 500 as any,
+          },
+        },
+      ];
+
+      (prisma.warehouseStock.findMany as jest.Mock).mockResolvedValue(mockStocks);
+
+      const result = await service.getWarehouseStocks('wh-1');
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            warehouseId: 'wh-1',
+            currentStock: 100,
+            status: 'SAFE',
+          }),
+        ]),
+      );
+    });
+
+    it('should throw BadRequestException when adjusting stock out exceeds warehouse stock', async () => {
+      const mockWarehouseStock = {
+        id: 'ws-1',
+        warehouseId: 'wh-1',
+        ingredientId: 'ing-1',
+        currentStock: 20 as any,
+        minStock: 10 as any,
+        ingredient: {
+          id: 'ing-1',
+          code: 'NL-CA-HOI',
+          name: 'Ca hoi',
+          unit: 'g',
+          costPrice: 500 as any,
+        },
+      };
+
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({ id: 'wh-1' });
+      (prisma.ingredient.findUnique as jest.Mock).mockResolvedValue({ id: 'ing-1', unit: 'g' });
+      (prisma.warehouseStock.findUnique as jest.Mock).mockResolvedValue(mockWarehouseStock);
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          warehouseStock: {
+            findUnique: jest.fn().mockResolvedValue(mockWarehouseStock),
+            update: jest.fn(),
+          },
+          inventoryTransaction: {
+            create: jest.fn(),
+          },
+        });
+      });
+
+      await expect(
+        service.adjustWarehouseStock('wh-1', 'ing-1', {
+          type: TransactionType.OUT,
+          reason: TransactionReason.KITCHEN_USAGE,
+          quantity: 50,
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });
