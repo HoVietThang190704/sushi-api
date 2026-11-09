@@ -93,6 +93,7 @@ model Product {
 
   comboItemsAsParent ComboItem[] @relation("ComboParent")
   comboItemsAsChild  ComboItem[] @relation("ComboChild")
+  recipe             Recipe?
 
   @@map("products")
   @@schema("catalog")
@@ -144,9 +145,87 @@ model Ingredient {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  transactions InventoryTransaction[]
+  transactions    InventoryTransaction[]
+  warehouseStocks WarehouseStock[]
+  recipeItems     RecipeItem[]
 
   @@map("ingredients")
+  @@schema("inventory")
+}
+
+model Warehouse {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique @db.VarChar(50)
+  name      String   @db.VarChar(160)
+  address   String?  @db.Text
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  branches     Branch[]
+  stocks       WarehouseStock[]
+  transactions InventoryTransaction[]
+  deductions   OrderRecipeDeduction[]
+
+  @@map("warehouses")
+  @@schema("inventory")
+}
+
+model WarehouseStock {
+  id           String     @id @default(uuid()) @db.Uuid
+  warehouseId  String     @map("warehouse_id") @db.Uuid
+  warehouse    Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  ingredientId String     @map("ingredient_id") @db.Uuid
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  currentStock Decimal    @default(0) @map("current_stock") @db.Decimal(18, 3)
+  minStock     Decimal    @default(0) @map("min_stock") @db.Decimal(18, 3)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  @@unique([warehouseId, ingredientId])
+  @@index([warehouseId])
+  @@index([ingredientId])
+  @@map("warehouse_stocks")
+  @@schema("inventory")
+}
+
+model Recipe {
+  id        String       @id @default(uuid()) @db.Uuid
+  productId String       @unique @map("product_id") @db.Uuid
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  notes     String?      @db.Text
+  isActive  Boolean      @default(true) @map("is_active")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  items RecipeItem[]
+
+  @@map("recipes")
+  @@schema("inventory")
+}
+
+model RecipeItem {
+  id           String     @id @default(uuid()) @db.Uuid
+  recipeId     String     @map("recipe_id") @db.Uuid
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredientId String     @map("ingredient_id") @db.Uuid
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  quantity     Decimal    @db.Decimal(18, 3)
+
+  @@unique([recipeId, ingredientId])
+  @@map("recipe_items")
+  @@schema("inventory")
+}
+
+model OrderRecipeDeduction {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderId     String    @unique @map("order_id") @db.Uuid
+  orderCode   String    @map("order_code") @db.VarChar(50)
+  warehouseId String    @map("warehouse_id") @db.Uuid
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("order_recipe_deductions")
   @@schema("inventory")
 }
 
@@ -180,6 +259,9 @@ model InventoryTransaction {
   code         String            @unique @db.VarChar(50)
   type         TransactionType
   reason       TransactionReason @default(PURCHASE)
+  warehouseId  String?           @map("warehouse_id") @db.Uuid
+  warehouse    Warehouse?        @relation(fields: [warehouseId], references: [id])
+  orderId      String?           @map("order_id") @db.Uuid
   ingredientId String            @map("ingredient_id") @db.Uuid
   ingredient   Ingredient        @relation(fields: [ingredientId], references: [id])
   quantity     Decimal           @db.Decimal(18, 3)
@@ -218,14 +300,16 @@ enum PaymentStatus {
 }
 
 model Branch {
-  id        String   @id @default(uuid()) @db.Uuid
-  code      String   @unique @db.VarChar(50)
-  name      String   @db.VarChar(160)
-  address   String   @db.Text
-  phone     String   @db.VarChar(30)
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          String     @id @default(uuid()) @db.Uuid
+  code        String     @unique @db.VarChar(50)
+  name        String     @db.VarChar(160)
+  address     String     @db.Text
+  phone       String     @db.VarChar(30)
+  warehouseId String?    @map("warehouse_id") @db.Uuid
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id])
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
 
   orders        Order[]
   shippingRules ShippingRule[]
