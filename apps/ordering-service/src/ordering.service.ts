@@ -8,6 +8,7 @@ import {
 import { PrismaService } from './prisma.service';
 import { ShippingService } from './shipping/shipping.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
 import { RabbitMQService } from '@common/rabbitmq';
 import { createRealtimeEvent, ORDER_TRACK_SCOPE } from '@contracts';
 import {
@@ -129,6 +130,25 @@ export class OrderingService {
     const code = this.generateOrderCode();
     const branchId = effectiveBranchId;
 
+    // Snapshot cấu hình thanh toán chuyển khoản nếu khách chọn VIETQR / BANK_TRANSFER
+    let paymentQrUrl: string | null = null;
+    let paymentBankInfo: string | null = null;
+    const normalizedMethod = dto.paymentMethod?.trim().toUpperCase() || 'CASH';
+
+    if (normalizedMethod === 'VIETQR' || normalizedMethod === 'BANK_TRANSFER') {
+      const activeConfig = await this.getPaymentConfig();
+      if (activeConfig && activeConfig.isActive) {
+        paymentQrUrl = activeConfig.qrImageUrl || null;
+        paymentBankInfo = JSON.stringify({
+          bankName: activeConfig.bankName,
+          accountNumber: activeConfig.accountNumber,
+          accountHolder: activeConfig.accountHolder,
+          transferSyntax: activeConfig.transferSyntax,
+          note: activeConfig.note,
+        });
+      }
+    }
+
     // 5. Save in database transaction
     const order = await this.prisma.$transaction(async (tx) => {
       const newOrder = await tx.order.create({
@@ -148,6 +168,8 @@ export class OrderingService {
           paymentMethod: dto.paymentMethod?.trim() || 'CASH',
           shippingFee,
           totalAmount: finalTotalAmount,
+          paymentQrUrl,
+          paymentBankInfo,
           idempotencyKey: dto.idempotencyKey || null,
           accessTokenHash,
           items: {
@@ -375,6 +397,21 @@ export class OrderingService {
 
     if (!order) {
       throw new NotFoundException(`Không tìm thấy đơn hàng có ID "${orderId}"`);
+    }
+
+    // Ràng buộc đơn thanh toán chuyển khoản: bắt buộc phải có paymentStatus === 'PAID' trước khi CONFIRMED hoặc PREPARING
+    const isTransferMethod =
+      order.paymentMethod?.toUpperCase() === 'VIETQR' ||
+      order.paymentMethod?.toUpperCase() === 'BANK_TRANSFER';
+
+    if (
+      isTransferMethod &&
+      order.paymentStatus !== PaymentStatus.PAID &&
+      (toStatus === OrderStatus.CONFIRMED || toStatus === OrderStatus.PREPARING)
+    ) {
+      throw new BadRequestException(
+        'Đơn hàng thanh toán chuyển khoản cần được xác nhận thanh toán (Đã thanh toán) trước khi duyệt đơn hoặc chế biến!',
+      );
     }
 
     // 1. Kiểm tra ràng buộc chuyển trạng thái nghiêm ngặt sang PREPARING
@@ -779,6 +816,54 @@ export class OrderingService {
     }
 
     return updated;
+  }
+
+  async getPaymentConfig() {
+    let config = await this.prisma.paymentConfig.findUnique({
+      where: { key: 'DEFAULT' },
+    });
+
+    if (!config) {
+      config = await this.prisma.paymentConfig.create({
+        data: {
+          key: 'DEFAULT',
+          bankName: 'MB Bank (Ngân hàng Quân Đội)',
+          accountNumber: '0988888888',
+          accountHolder: 'HANBI SUSHI PLATFORM',
+          qrImageUrl: null,
+          transferSyntax: 'HANBI',
+          note: 'Vui lòng ghi đúng nội dung chuyển khoản để nhân viên đối chiếu và xác nhận nhanh nhất.',
+          isActive: true,
+        },
+      });
+    }
+
+    return config;
+  }
+
+  async updatePaymentConfig(dto: UpdatePaymentConfigDto) {
+    const existing = await this.getPaymentConfig();
+
+    return this.prisma.paymentConfig.update({
+      where: { id: existing.id },
+      data: {
+        ...(dto.bankName !== undefined && { bankName: dto.bankName?.trim() }),
+        ...(dto.accountNumber !== undefined && {
+          accountNumber: dto.accountNumber?.trim(),
+        }),
+        ...(dto.accountHolder !== undefined && {
+          accountHolder: dto.accountHolder?.trim(),
+        }),
+        ...(dto.qrImageUrl !== undefined && {
+          qrImageUrl: dto.qrImageUrl?.trim() || null,
+        }),
+        ...(dto.transferSyntax !== undefined && {
+          transferSyntax: dto.transferSyntax?.trim().toUpperCase(),
+        }),
+        ...(dto.note !== undefined && { note: dto.note?.trim() }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
   }
 
   private parseVietnamDateBoundary(dateStr: string, isEndOfDay = false): Date {

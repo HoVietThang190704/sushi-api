@@ -355,6 +355,8 @@ model Order {
   paymentMethod    String        @default("CASH") @map("payment_method") @db.VarChar(30)
   shippingFee      Decimal       @default(0) @map("shipping_fee") @db.Decimal(18, 2)
   totalAmount      Decimal       @map("total_amount") @db.Decimal(18, 2)
+  paymentQrUrl     String?       @map("payment_qr_url") @db.Text
+  paymentBankInfo  String?       @map("payment_bank_info") @db.Text
   idempotencyKey   String?       @unique @map("idempotency_key") @db.VarChar(100)
   accessTokenHash  String        @map("access_token_hash") @db.VarChar(64)
   createdAt        DateTime      @default(now()) @map("created_at")
@@ -394,5 +396,22 @@ model OrderStatusHistory {
   createdAt  DateTime     @default(now()) @map("created_at")
 
   @@map("order_status_histories")
+  @@schema("ordering")
+}
+
+model PaymentConfig {
+  id             String   @id @default(uuid()) @db.Uuid
+  key            String   @unique @default("DEFAULT") @db.VarChar(50)
+  bankName       String?  @map("bank_name") @db.VarChar(120)
+  accountNumber  String?  @map("account_number") @db.VarChar(60)
+  accountHolder  String?  @map("account_holder") @db.VarChar(120)
+  qrImageUrl     String?  @map("qr_image_url") @db.Text
+  transferSyntax String?  @default("HANBI") @map("transfer_syntax") @db.VarChar(50)
+  note           String?  @db.Text
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("payment_configs")
   @@schema("ordering")
 }

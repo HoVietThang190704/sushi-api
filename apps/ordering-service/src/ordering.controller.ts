@@ -14,11 +14,22 @@ import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
+import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 
 @Controller('orders')
 export class OrderingController {
   constructor(private readonly orderingService: OrderingService) {}
+
+  @Get('payment-config')
+  async getPaymentConfig() {
+    return this.orderingService.getPaymentConfig();
+  }
+
+  @Patch('payment-config')
+  async updatePaymentConfig(@Body() dto: UpdatePaymentConfigDto) {
+    return this.orderingService.updatePaymentConfig(dto);
+  }
 
   @Post()
   async createOrder(

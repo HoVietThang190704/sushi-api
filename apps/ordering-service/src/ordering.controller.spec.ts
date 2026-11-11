@@ -20,6 +20,8 @@ describe('OrderingController', () => {
             updateOrderStatus: jest.fn(),
             updatePaymentStatus: jest.fn(),
             cancelOrderByCustomer: jest.fn(),
+            getPaymentConfig: jest.fn(),
+            updatePaymentConfig: jest.fn(),
           },
         },
       ],
@@ -87,5 +89,16 @@ describe('OrderingController', () => {
   it('should call service.cancelOrderByCustomer with code and token', async () => {
     await controller.cancelOrder('ORD-1', { token: 'tok-1', reason: 'change mind' });
     expect(service.cancelOrderByCustomer).toHaveBeenCalledWith('ORD-1', 'tok-1', 'change mind');
+  });
+
+  it('should call service.getPaymentConfig', async () => {
+    await controller.getPaymentConfig();
+    expect(service.getPaymentConfig).toHaveBeenCalled();
+  });
+
+  it('should call service.updatePaymentConfig with dto', async () => {
+    const dto = { bankName: 'Vietcombank', accountNumber: '999999' };
+    await controller.updatePaymentConfig(dto);
+    expect(service.updatePaymentConfig).toHaveBeenCalledWith(dto);
   });
 });

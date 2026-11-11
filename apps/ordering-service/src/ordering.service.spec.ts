@@ -54,6 +54,11 @@ describe('OrderingService - createOrder', () => {
               findUnique: jest.fn(),
               create: jest.fn(),
             },
+            paymentConfig: {
+              findUnique: jest.fn(),
+              create: jest.fn(),
+              update: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
         },
@@ -857,6 +862,100 @@ describe('OrderingService - createOrder', () => {
       await expect(
         service.getOrders({ startDate: '2026-02-30' }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('OrderingService - Bank Transfer Gating', () => {
+    it('should block moving VIETQR order to CONFIRMED when UNPAID', async () => {
+      const order = {
+        id: 'ord-unpaid-qr',
+        status: OrderStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        paymentMethod: 'VIETQR',
+        items: [],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(order as any);
+
+      await expect(
+        service.updateOrderStatus('ord-unpaid-qr', OrderStatus.CONFIRMED),
+      ).rejects.toThrow(
+        'Đơn hàng thanh toán chuyển khoản cần được xác nhận thanh toán (Đã thanh toán) trước khi duyệt đơn hoặc chế biến!',
+      );
+    });
+  });
+
+  describe('OrderingService - PaymentConfig', () => {
+    it('should return existing payment config if present', async () => {
+      const mockConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        bankName: 'MB Bank',
+        accountNumber: '123456789',
+        accountHolder: 'SUSHI TEST',
+        qrImageUrl: 'https://example.com/qr.png',
+        transferSyntax: 'HANBI',
+        isActive: true,
+      };
+
+      jest
+        .spyOn(prisma.paymentConfig, 'findUnique')
+        .mockResolvedValue(mockConfig as any);
+
+      const result = await service.getPaymentConfig();
+      expect(result).toEqual(mockConfig);
+    });
+
+    it('should create default payment config if not found', async () => {
+      jest.spyOn(prisma.paymentConfig, 'findUnique').mockResolvedValue(null);
+      const createdConfig = {
+        id: 'cfg-new',
+        key: 'DEFAULT',
+        bankName: 'MB Bank (Ngân hàng Quân Đội)',
+        accountNumber: '0988888888',
+        accountHolder: 'HANBI SUSHI PLATFORM',
+        qrImageUrl: null,
+        transferSyntax: 'HANBI',
+        isActive: true,
+      };
+      jest
+        .spyOn(prisma.paymentConfig, 'create')
+        .mockResolvedValue(createdConfig as any);
+
+      const result = await service.getPaymentConfig();
+      expect(result).toEqual(createdConfig);
+    });
+
+    it('should update payment config with provided fields', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        bankName: 'Old Bank',
+      };
+      jest
+        .spyOn(prisma.paymentConfig, 'findUnique')
+        .mockResolvedValue(existingConfig as any);
+      jest.spyOn(prisma.paymentConfig, 'update').mockResolvedValue({
+        ...existingConfig,
+        bankName: 'New Bank',
+        qrImageUrl: 'https://cloudinary.com/new-qr.png',
+      } as any);
+
+      const result = await service.updatePaymentConfig({
+        bankName: 'New Bank',
+        qrImageUrl: 'https://cloudinary.com/new-qr.png',
+      });
+
+      expect(result.bankName).toBe('New Bank');
+      expect(prisma.paymentConfig.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cfg-1' },
+          data: expect.objectContaining({
+            bankName: 'New Bank',
+            qrImageUrl: 'https://cloudinary.com/new-qr.png',
+          }),
+        }),
+      );
     });
   });
 });
