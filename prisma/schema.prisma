@@ -353,6 +353,7 @@ model Order {
   status           OrderStatus   @default(PENDING)
   paymentStatus    PaymentStatus @default(UNPAID) @map("payment_status")
   paymentMethod    String        @default("CASH") @map("payment_method") @db.VarChar(30)
+  source           String        @default("STOREFRONT") @db.VarChar(20)
   shippingFee      Decimal       @default(0) @map("shipping_fee") @db.Decimal(18, 2)
   totalAmount      Decimal       @map("total_amount") @db.Decimal(18, 2)
   paymentQrUrl     String?       @map("payment_qr_url") @db.Text
@@ -413,5 +414,17 @@ model PaymentConfig {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@map("payment_configs")
+  @@schema("ordering")
+}
+
+model StoreConfig {
+  id                      String   @id @default(uuid()) @db.Uuid
+  key                     String   @unique @default("DEFAULT") @db.VarChar(50)
+  customerOrderingEnabled Boolean  @default(true) @map("customer_ordering_enabled")
+  contactPhone            String   @default("0988888888") @map("contact_phone") @db.VarChar(30)
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  @@map("store_configs")
   @@schema("ordering")
 }
