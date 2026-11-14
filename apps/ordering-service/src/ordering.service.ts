@@ -1120,7 +1120,7 @@ export class OrderingService {
       );
     }
 
-    return this.prisma.storeConfig.update({
+    const updated = await this.prisma.storeConfig.update({
       where: { id: existing.id },
       data: {
         ...(dto.customerOrderingEnabled !== undefined && {
@@ -1131,6 +1131,25 @@ export class OrderingService {
         }),
       },
     });
+
+    try {
+      const published = await this.rabbitmqService.publishEvent(
+        createRealtimeEvent({
+          type: 'store-config.updated',
+          resource: 'order',
+          action: 'UPDATED',
+          branchId: null,
+          payload: {},
+        }),
+      );
+      if (!published) {
+        this.logger.warn('Failed to publish store-config.updated event: RabbitMQ unavailable');
+      }
+    } catch (error) {
+      this.logger.warn(`Failed to publish store-config.updated event: ${String(error)}`);
+    }
+
+    return updated;
   }
 
   private parseVietnamDateBoundary(dateStr: string, isEndOfDay = false): Date {

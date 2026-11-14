@@ -1045,6 +1045,38 @@ describe('OrderingService - createOrder', () => {
 
       expect(result.customerOrderingEnabled).toBe(false);
       expect(result.contactPhone).toBe('0911223344');
+      expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'store-config.updated',
+          resource: 'order',
+          action: 'UPDATED',
+          branchId: null,
+          payload: {},
+        }),
+      );
+    });
+
+    it('should return updated config and not throw when rabbitmq publish fails', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+      };
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue(existingConfig as any);
+      jest.spyOn(prisma.storeConfig, 'update').mockResolvedValue({
+        ...existingConfig,
+        customerOrderingEnabled: true,
+        contactPhone: '0999888777',
+      } as any);
+      jest.spyOn(rabbitmqService, 'publishEvent').mockResolvedValue(false);
+
+      const result = await service.updateStoreConfig(
+        { customerOrderingEnabled: true, contactPhone: '0999888777' },
+        'ADMIN',
+      );
+
+      expect(result.contactPhone).toBe('0999888777');
     });
 
     it('should block new customer orders when customerOrderingEnabled is false', async () => {
