@@ -1095,4 +1095,112 @@ describe('OrderingService - createOrder', () => {
       expect(result.order).toEqual(existingOrder);
     });
   });
+
+  describe('OrderingService - createStaffOrder', () => {
+    it('should reject if role is not authorized', async () => {
+      await expect(
+        service.createStaffOrder({} as any, 'user-1', undefined),
+      ).rejects.toThrow(UnauthorizedException);
+
+      await expect(
+        service.createStaffOrder({} as any, 'user-1', 'CUSTOMER'),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject if branch does not exist or is inactive', async () => {
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue(null);
+
+      await expect(
+        service.createStaffOrder(
+          {
+            customerName: 'Khach B',
+            customerPhone: '0901234567',
+            address: '123 Le Loi',
+            district: 'Quận 1',
+            ward: 'Phường Bến Nghé',
+            branchId: '00000000-0000-0000-0000-000000000099',
+            items: [{ productId: 'uuid-1', quantity: 1 }],
+          },
+          'staff-1',
+          'STAFF',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should successfully create staff order with source=STAFF even if customerOrderingEnabled is false', async () => {
+      const branchId = '00000000-0000-0000-0000-000000000001';
+      jest.spyOn(prisma.branch, 'findUnique').mockResolvedValue({
+        id: branchId,
+        name: 'Chi nhánh 1',
+        isActive: true,
+      } as any);
+
+      jest.spyOn(prisma.product, 'findMany').mockResolvedValue([
+        {
+          id: 'uuid-prod-1',
+          name: 'Nigiri Cá Hồi',
+          sellingPrice: 120000 as any,
+          isActive: true,
+        } as any,
+      ]);
+
+      const createdOrder = {
+        id: 'ord-staff-1',
+        code: 'ORD-STAFF-01',
+        branchId,
+        customerName: 'Khach B',
+        customerPhone: '0901234567',
+        status: OrderStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        source: 'STAFF',
+        totalAmount: 140000 as any,
+        shippingFee: 20000 as any,
+        items: [],
+      };
+
+      jest.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+        return cb({
+          order: {
+            create: jest.fn().mockResolvedValue(createdOrder),
+          },
+          orderStatusHistory: {
+            create: jest.fn().mockResolvedValue({ id: 'hist-staff-1' }),
+          },
+        });
+      });
+
+      // Even if customer ordering is disabled:
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue({
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: false,
+        contactPhone: '0988888888',
+      } as any);
+
+      const result = await service.createStaffOrder(
+        {
+          customerName: 'Khach B',
+          customerPhone: '0901234567',
+          address: '123 Le Loi',
+          district: 'Quận 1',
+          ward: 'Phường Bến Nghé',
+          branchId,
+          items: [{ productId: 'uuid-prod-1', quantity: 1 }],
+        },
+        'staff-user-id',
+        'STAFF',
+      );
+
+      expect(result.order.source).toBe('STAFF');
+      expect(result.order.status).toBe(OrderStatus.PENDING);
+      expect(rabbitmqService.publishEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'order.created',
+          payload: expect.objectContaining({
+            source: 'STAFF',
+          }),
+        }),
+      );
+    });
+  });
 });

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { OrderingService } from './ordering.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { UpdatePaymentStatusDto } from './dto/update-payment-status.dto';
 import { CancelOrderDto } from './dto/cancel-order.dto';
@@ -54,6 +55,19 @@ export class OrderingController {
       dto.idempotencyKey = idempotencyHeader;
     }
     return this.orderingService.createOrder(dto);
+  }
+
+  @Post('staff')
+  async createStaffOrder(
+    @Body() dto: CreateStaffOrderDto,
+    @Headers('x-user-id') staffId?: string,
+    @Headers('x-user-role') role?: string,
+    @Headers('x-idempotency-key') idempotencyHeader?: string,
+  ) {
+    if (!dto.idempotencyKey && idempotencyHeader) {
+      dto.idempotencyKey = idempotencyHeader;
+    }
+    return this.orderingService.createStaffOrder(dto, staffId, role);
   }
 
   @Get('track')

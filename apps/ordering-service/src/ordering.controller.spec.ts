@@ -24,6 +24,7 @@ describe('OrderingController', () => {
             updatePaymentConfig: jest.fn(),
             getStoreConfig: jest.fn(),
             updateStoreConfig: jest.fn(),
+            createStaffOrder: jest.fn(),
           },
         },
       ],
@@ -113,5 +114,23 @@ describe('OrderingController', () => {
     const dto = { customerOrderingEnabled: false, contactPhone: '0988888888' };
     await controller.updateStoreConfig(dto, 'ADMIN');
     expect(service.updateStoreConfig).toHaveBeenCalledWith(dto, 'ADMIN');
+  });
+
+  it('should call service.createStaffOrder with staff dto, staffId, and role', async () => {
+    const dto = {
+      customerName: 'Khach B',
+      customerPhone: '0901234567',
+      address: '123 Le Loi',
+      district: 'Quận 1',
+      ward: 'Phường Bến Nghé',
+      branchId: '00000000-0000-0000-0000-000000000001',
+      items: [{ productId: 'uuid-1', quantity: 1 }],
+    };
+    await controller.createStaffOrder(dto as any, 'staff-1', 'STAFF', 'idem-1');
+    expect(service.createStaffOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'idem-1' }),
+      'staff-1',
+      'STAFF',
+    );
   });
 });

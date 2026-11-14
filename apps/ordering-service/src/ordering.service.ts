@@ -8,6 +8,7 @@ import {
 import { PrismaService } from './prisma.service';
 import { ShippingService } from './shipping/shipping.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateStaffOrderDto } from './dto/create-staff-order.dto';
 import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
 import { UpdateStoreConfigDto } from './dto/update-store-config.dto';
 import { RabbitMQService } from '@common/rabbitmq';
@@ -224,6 +225,207 @@ export class OrderingService {
             customerPhone: order.customerPhone,
             totalAmount: Number(order.totalAmount),
             status: order.status,
+          },
+        }),
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to publish order.created event: ${message}`);
+    }
+
+    return {
+      order,
+      trackingToken: rawTrackingToken,
+      isDuplicate: false,
+    };
+  }
+
+  async createStaffOrder(
+    dto: CreateStaffOrderDto,
+    staffId?: string,
+    role?: string,
+  ) {
+    const allowedRoles = ['ADMIN', 'SUPER_ADMIN', 'BRANCH_MANAGER', 'STAFF'];
+    if (!role || !allowedRoles.includes(role)) {
+      throw new UnauthorizedException(
+        'Bạn không có quyền tạo đơn hàng nhân viên',
+      );
+    }
+
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('Đơn hàng phải có ít nhất 1 món');
+    }
+
+    // 1. Check idempotency key if provided
+    if (dto.idempotencyKey) {
+      const existing = await this.prisma.order.findUnique({
+        where: { idempotencyKey: dto.idempotencyKey },
+        include: { items: true, statusHistories: true },
+      });
+      if (existing) {
+        return {
+          order: existing,
+          trackingToken: null,
+          isDuplicate: true,
+        };
+      }
+    }
+
+    // 2. Validate branch
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: dto.branchId },
+    });
+    if (!branch || !branch.isActive) {
+      throw new BadRequestException(
+        'Chi nhánh được chọn không tồn tại hoặc đã ngừng hoạt động',
+      );
+    }
+
+    // 3. Fetch active products from catalog to snapshot name and price (DO NOT trust client prices)
+    const productIds = dto.items.map((i) => i.productId);
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        isActive: true,
+      },
+    });
+
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    let calculatedTotal = 0;
+    const orderItemsData: Array<{
+      productId: string;
+      productName: string;
+      unitPrice: number;
+      quantity: number;
+      subtotal: number;
+    }> = [];
+
+    for (const item of dto.items) {
+      const product = productMap.get(item.productId);
+      if (!product) {
+        throw new BadRequestException(
+          `Sản phẩm ID "${item.productId}" không tồn tại hoặc đã ngừng kinh doanh`,
+        );
+      }
+      const unitPrice = Number(product.sellingPrice);
+      const subtotal = unitPrice * item.quantity;
+      calculatedTotal += subtotal;
+
+      orderItemsData.push({
+        productId: product.id,
+        productName: product.name,
+        unitPrice,
+        quantity: item.quantity,
+        subtotal,
+      });
+    }
+
+    // 4. Calculate shipping fee
+    let shippingFee = 0;
+    if (dto.ward) {
+      const shippingCalculation = await this.shippingService.calculateShipping({
+        district: dto.district,
+        ward: dto.ward,
+        branchId: dto.branchId,
+      });
+      shippingFee = shippingCalculation.fee;
+    }
+
+    const finalTotalAmount = calculatedTotal + shippingFee;
+
+    // 5. Generate raw tracking token and SHA-256 hash
+    const rawTrackingToken = randomBytes(24).toString('hex');
+    const accessTokenHash = this.hashSecretToken(rawTrackingToken);
+    const code = this.generateOrderCode();
+
+    // Snapshot cấu hình thanh toán chuyển khoản nếu khách chọn VIETQR / BANK_TRANSFER
+    let paymentQrUrl: string | null = null;
+    let paymentBankInfo: string | null = null;
+    const normalizedMethod = dto.paymentMethod?.trim().toUpperCase() || 'CASH';
+
+    if (normalizedMethod === 'VIETQR' || normalizedMethod === 'BANK_TRANSFER') {
+      const activeConfig = await this.getPaymentConfig();
+      if (activeConfig && activeConfig.isActive) {
+        paymentQrUrl = activeConfig.qrImageUrl || null;
+        paymentBankInfo = JSON.stringify({
+          bankName: activeConfig.bankName,
+          accountNumber: activeConfig.accountNumber,
+          accountHolder: activeConfig.accountHolder,
+          transferSyntax: activeConfig.transferSyntax,
+          note: activeConfig.note,
+        });
+      }
+    }
+
+    // 6. Save in database transaction
+    const order = await this.prisma.$transaction(async (tx) => {
+      const newOrder = await tx.order.create({
+        data: {
+          code,
+          branchId: dto.branchId,
+          customerName: dto.customerName.trim(),
+          customerPhone: dto.customerPhone.trim(),
+          customerEmail: dto.customerEmail?.trim(),
+          address: dto.address?.trim(),
+          province: dto.province?.trim() || 'TP. Hồ Chí Minh',
+          district: dto.district?.trim(),
+          ward: dto.ward?.trim(),
+          note: dto.note?.trim(),
+          status: OrderStatus.PENDING,
+          paymentStatus: PaymentStatus.UNPAID,
+          paymentMethod: dto.paymentMethod?.trim() || 'CASH',
+          source: 'STAFF',
+          shippingFee,
+          totalAmount: finalTotalAmount,
+          paymentQrUrl,
+          paymentBankInfo,
+          idempotencyKey: dto.idempotencyKey || null,
+          accessTokenHash,
+          items: {
+            create: orderItemsData.map((item) => ({
+              productId: item.productId,
+              productName: item.productName,
+              unitPrice: item.unitPrice,
+              quantity: item.quantity,
+              subtotal: item.subtotal,
+            })),
+          },
+        },
+        include: {
+          items: true,
+        },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: newOrder.id,
+          fromStatus: null,
+          toStatus: OrderStatus.PENDING,
+          reason: 'Nhân viên tạo đơn giao tận nơi qua điện thoại',
+          changedBy: staffId || role || 'STAFF',
+        },
+      });
+
+      return newOrder;
+    });
+
+    // 7. Emit realtime domain event
+    try {
+      await this.rabbitmqService.publishEvent(
+        createRealtimeEvent({
+          type: 'order.created',
+          resource: 'order',
+          action: 'CREATED',
+          branchId: order.branchId,
+          payload: {
+            orderId: order.id,
+            orderCode: order.code,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            totalAmount: Number(order.totalAmount),
+            status: order.status,
+            source: 'STAFF',
           },
         }),
       );
