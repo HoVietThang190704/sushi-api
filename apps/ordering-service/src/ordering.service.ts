@@ -9,6 +9,7 @@ import { PrismaService } from './prisma.service';
 import { ShippingService } from './shipping/shipping.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
+import { UpdateStoreConfigDto } from './dto/update-store-config.dto';
 import { RabbitMQService } from '@common/rabbitmq';
 import { createRealtimeEvent, ORDER_TRACK_SCOPE } from '@contracts';
 import {
@@ -66,7 +67,15 @@ export class OrderingService {
       }
     }
 
-    // 2. Fetch active products from catalog to snapshot name and price (DO NOT trust client prices)
+    // 2. Check store configuration: If customer ordering is disabled, block new storefront orders
+    const storeConfig = await this.getStoreConfig();
+    if (!storeConfig.customerOrderingEnabled) {
+      throw new BadRequestException(
+        'Cửa hàng hiện đang tạm ngưng nhận đặt món trực tuyến. Quý khách vui lòng liên hệ hotline để được phục vụ.',
+      );
+    }
+
+    // 3. Fetch active products from catalog to snapshot name and price (DO NOT trust client prices)
     const productIds = dto.items.map((i) => i.productId);
     const products = await this.prisma.product.findMany({
       where: {
@@ -862,6 +871,62 @@ export class OrderingService {
         }),
         ...(dto.note !== undefined && { note: dto.note?.trim() }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
+    });
+  }
+
+  async getStoreConfig() {
+    let config = await this.prisma.storeConfig.findUnique({
+      where: { key: 'DEFAULT' },
+    });
+
+    if (!config) {
+      config = await this.prisma.storeConfig.create({
+        data: {
+          key: 'DEFAULT',
+          customerOrderingEnabled: true,
+          contactPhone: '0988888888',
+        },
+      });
+    }
+
+    return config;
+  }
+
+  async updateStoreConfig(dto: UpdateStoreConfigDto, userRole?: string) {
+    if (userRole !== 'ADMIN' && userRole !== 'SUPER_ADMIN') {
+      throw new UnauthorizedException(
+        'Chỉ quản trị viên mới có quyền cập nhật cấu hình cửa hàng',
+      );
+    }
+
+    const existing = await this.getStoreConfig();
+
+    const targetOrderingEnabled =
+      dto.customerOrderingEnabled !== undefined
+        ? dto.customerOrderingEnabled
+        : existing.customerOrderingEnabled;
+
+    const targetPhone =
+      dto.contactPhone !== undefined
+        ? dto.contactPhone.trim()
+        : existing.contactPhone;
+
+    if (!targetOrderingEnabled && (!targetPhone || targetPhone.length < 9)) {
+      throw new BadRequestException(
+        'Vui lòng cấu hình số điện thoại hotline liên hệ hợp lệ trước khi tắt đặt hàng trực tuyến',
+      );
+    }
+
+    return this.prisma.storeConfig.update({
+      where: { id: existing.id },
+      data: {
+        ...(dto.customerOrderingEnabled !== undefined && {
+          customerOrderingEnabled: dto.customerOrderingEnabled,
+        }),
+        ...(dto.contactPhone !== undefined && {
+          contactPhone: dto.contactPhone.trim(),
+        }),
       },
     });
   }

@@ -62,6 +62,36 @@ async function bootstrap() {
   const orderingServiceUrl =
     process.env.ORDERING_SERVICE_URL || 'http://localhost:3004';
 
+  // Helper to sanitize incoming client headers and inject verified JWT claims
+  const handleProxyAuth = (proxyReq: any, req: any) => {
+    const customReq = req as AuthenticatedRequest;
+    fixRequestBody(proxyReq, req);
+
+    // SECURITY: Always strip incoming untrusted x-user-* headers from client
+    proxyReq.removeHeader('x-user-id');
+    proxyReq.removeHeader('x-user-role');
+    proxyReq.removeHeader('x-user-branch-id');
+
+    let token = customReq.headers.authorization?.replace('Bearer ', '');
+    if (!token && customReq.cookies) {
+      token = customReq.cookies['access_token'];
+    }
+
+    if (token) {
+      proxyReq.setHeader('authorization', `Bearer ${token}`);
+      try {
+        const payload = jwtService.verify(token, {
+          secret: process.env.JWT_SECRET,
+        });
+        if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
+        if (payload?.role)
+          proxyReq.setHeader('x-user-role', payload.role);
+        if (payload?.branchId)
+          proxyReq.setHeader('x-user-branch-id', payload.branchId);
+      } catch {}
+    }
+  };
+
   // 3. Reverse Proxy: /api/auth/* -> http://localhost:3001/auth/*
   app.use(
     '/api/auth',
@@ -70,30 +100,7 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/auth${path}`,
       on: {
-        proxyReq: (proxyReq, req) => {
-          const customReq = req as AuthenticatedRequest;
-          // Re-stream body nếu đã bị Express/NestJS body-parser đọc
-          fixRequestBody(proxyReq, req);
-
-          let token = customReq.headers.authorization?.replace('Bearer ', '');
-          if (!token && customReq.cookies) {
-            token = customReq.cookies['access_token'];
-          }
-
-          if (token) {
-            proxyReq.setHeader('authorization', `Bearer ${token}`);
-            try {
-              const payload = jwtService.verify(token, {
-                secret: process.env.JWT_SECRET,
-              });
-              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role)
-                proxyReq.setHeader('x-user-role', payload.role);
-              if (payload?.branchId)
-                proxyReq.setHeader('x-user-branch-id', payload.branchId);
-            } catch {}
-          }
-        },
+        proxyReq: handleProxyAuth,
       },
     }),
   );
@@ -106,29 +113,7 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/catalog${path}`,
       on: {
-        proxyReq: (proxyReq, req) => {
-          const customReq = req as AuthenticatedRequest;
-          fixRequestBody(proxyReq, req);
-
-          let token = customReq.headers.authorization?.replace('Bearer ', '');
-          if (!token && customReq.cookies) {
-            token = customReq.cookies['access_token'];
-          }
-
-          if (token) {
-            proxyReq.setHeader('authorization', `Bearer ${token}`);
-            try {
-              const payload = jwtService.verify(token, {
-                secret: process.env.JWT_SECRET,
-              });
-              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role)
-                proxyReq.setHeader('x-user-role', payload.role);
-              if (payload?.branchId)
-                proxyReq.setHeader('x-user-branch-id', payload.branchId);
-            } catch {}
-          }
-        },
+        proxyReq: handleProxyAuth,
       },
     }),
   );
@@ -141,29 +126,7 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/inventory${path}`,
       on: {
-        proxyReq: (proxyReq, req) => {
-          const customReq = req as AuthenticatedRequest;
-          fixRequestBody(proxyReq, req);
-
-          let token = customReq.headers.authorization?.replace('Bearer ', '');
-          if (!token && customReq.cookies) {
-            token = customReq.cookies['access_token'];
-          }
-
-          if (token) {
-            proxyReq.setHeader('authorization', `Bearer ${token}`);
-            try {
-              const payload = jwtService.verify(token, {
-                secret: process.env.JWT_SECRET,
-              });
-              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role)
-                proxyReq.setHeader('x-user-role', payload.role);
-              if (payload?.branchId)
-                proxyReq.setHeader('x-user-branch-id', payload.branchId);
-            } catch {}
-          }
-        },
+        proxyReq: handleProxyAuth,
       },
     }),
   );
@@ -176,29 +139,7 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/orders${path}`,
       on: {
-        proxyReq: (proxyReq, req) => {
-          const customReq = req as AuthenticatedRequest;
-          fixRequestBody(proxyReq, req);
-
-          let token = customReq.headers.authorization?.replace('Bearer ', '');
-          if (!token && customReq.cookies) {
-            token = customReq.cookies['access_token'];
-          }
-
-          if (token) {
-            proxyReq.setHeader('authorization', `Bearer ${token}`);
-            try {
-              const payload = jwtService.verify(token, {
-                secret: process.env.JWT_SECRET,
-              });
-              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role)
-                proxyReq.setHeader('x-user-role', payload.role);
-              if (payload?.branchId)
-                proxyReq.setHeader('x-user-branch-id', payload.branchId);
-            } catch {}
-          }
-        },
+        proxyReq: handleProxyAuth,
       },
     }),
   );
@@ -211,29 +152,7 @@ async function bootstrap() {
       changeOrigin: true,
       pathRewrite: (path) => `/shipping${path}`,
       on: {
-        proxyReq: (proxyReq, req) => {
-          const customReq = req as AuthenticatedRequest;
-          fixRequestBody(proxyReq, req);
-
-          let token = customReq.headers.authorization?.replace('Bearer ', '');
-          if (!token && customReq.cookies) {
-            token = customReq.cookies['access_token'];
-          }
-
-          if (token) {
-            proxyReq.setHeader('authorization', `Bearer ${token}`);
-            try {
-              const payload = jwtService.verify(token, {
-                secret: process.env.JWT_SECRET,
-              });
-              if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-              if (payload?.role)
-                proxyReq.setHeader('x-user-role', payload.role);
-              if (payload?.branchId)
-                proxyReq.setHeader('x-user-branch-id', payload.branchId);
-            } catch {}
-          }
-        },
+        proxyReq: handleProxyAuth,
       },
     }),
   );

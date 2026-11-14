@@ -59,6 +59,11 @@ describe('OrderingService - createOrder', () => {
               create: jest.fn(),
               update: jest.fn(),
             },
+            storeConfig: {
+              findUnique: jest.fn(),
+              create: jest.fn(),
+              update: jest.fn(),
+            },
             $transaction: jest.fn(),
           },
         },
@@ -93,6 +98,15 @@ describe('OrderingService - createOrder', () => {
     rabbitmqService = module.get<RabbitMQService>(RabbitMQService);
     jwtService = module.get<JwtService>(JwtService);
     shippingService = module.get<ShippingService>(ShippingService);
+
+    jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue({
+      id: 'cfg-default',
+      key: 'DEFAULT',
+      customerOrderingEnabled: true,
+      contactPhone: '0988888888',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as any);
   });
 
   it('should throw BadRequestException if items array is empty', async () => {
@@ -956,6 +970,129 @@ describe('OrderingService - createOrder', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('OrderingService - StoreConfig & Ordering Mode Gating', () => {
+    it('should return existing store config if present', async () => {
+      const mockConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: false,
+        contactPhone: '0912345678',
+      };
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue(mockConfig as any);
+
+      const result = await service.getStoreConfig();
+      expect(result).toEqual(mockConfig);
+    });
+
+    it('should create default store config if not found', async () => {
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue(null);
+      const createdConfig = {
+        id: 'cfg-new',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+      };
+      jest.spyOn(prisma.storeConfig, 'create').mockResolvedValue(createdConfig as any);
+
+      const result = await service.getStoreConfig();
+      expect(result).toEqual(createdConfig);
+    });
+
+    it('should reject updating store config if user role is not ADMIN or SUPER_ADMIN', async () => {
+      await expect(
+        service.updateStoreConfig({ customerOrderingEnabled: false }, 'STAFF'),
+      ).rejects.toThrow(UnauthorizedException);
+
+      await expect(
+        service.updateStoreConfig({ customerOrderingEnabled: false }, undefined),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('should reject disabling customer ordering if phone is missing or invalid', async () => {
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue({
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '',
+      } as any);
+
+      await expect(
+        service.updateStoreConfig({ customerOrderingEnabled: false, contactPhone: '' }, 'ADMIN'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should update store config when admin provides valid data', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+      };
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue(existingConfig as any);
+      jest.spyOn(prisma.storeConfig, 'update').mockResolvedValue({
+        ...existingConfig,
+        customerOrderingEnabled: false,
+        contactPhone: '0911223344',
+      } as any);
+
+      const result = await service.updateStoreConfig(
+        { customerOrderingEnabled: false, contactPhone: '0911223344' },
+        'ADMIN',
+      );
+
+      expect(result.customerOrderingEnabled).toBe(false);
+      expect(result.contactPhone).toBe('0911223344');
+    });
+
+    it('should block new customer orders when customerOrderingEnabled is false', async () => {
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue({
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: false,
+        contactPhone: '0988888888',
+      } as any);
+
+      await expect(
+        service.createOrder({
+          customerName: 'Khach Hang A',
+          customerPhone: '0901234567',
+          items: [{ productId: 'uuid-1', quantity: 1 }],
+        }),
+      ).rejects.toThrow(
+        'Cửa hàng hiện đang tạm ngưng nhận đặt món trực tuyến. Quý khách vui lòng liên hệ hotline để được phục vụ.',
+      );
+    });
+
+    it('should allow idempotency retry for existing order even when customerOrderingEnabled is false', async () => {
+      const existingOrder = {
+        id: 'ord-existing-1',
+        code: 'ORD-EXISTING-1',
+        idempotencyKey: 'idem-key-123',
+        status: OrderStatus.PENDING,
+        items: [],
+        statusHistories: [],
+      };
+
+      jest.spyOn(prisma.order, 'findUnique').mockResolvedValue(existingOrder as any);
+      jest.spyOn(prisma.storeConfig, 'findUnique').mockResolvedValue({
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: false,
+        contactPhone: '0988888888',
+      } as any);
+
+      const result = await service.createOrder({
+        customerName: 'Khach Hang A',
+        customerPhone: '0901234567',
+        idempotencyKey: 'idem-key-123',
+        items: [{ productId: 'uuid-1', quantity: 1 }],
+      });
+
+      expect(result.isDuplicate).toBe(true);
+      expect(result.order).toEqual(existingOrder);
     });
   });
 });

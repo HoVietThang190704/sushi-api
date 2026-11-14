@@ -22,6 +22,8 @@ describe('OrderingController', () => {
             cancelOrderByCustomer: jest.fn(),
             getPaymentConfig: jest.fn(),
             updatePaymentConfig: jest.fn(),
+            getStoreConfig: jest.fn(),
+            updateStoreConfig: jest.fn(),
           },
         },
       ],
@@ -100,5 +102,16 @@ describe('OrderingController', () => {
     const dto = { bankName: 'Vietcombank', accountNumber: '999999' };
     await controller.updatePaymentConfig(dto);
     expect(service.updatePaymentConfig).toHaveBeenCalledWith(dto);
+  });
+
+  it('should call service.getStoreConfig', async () => {
+    await controller.getStoreConfig();
+    expect(service.getStoreConfig).toHaveBeenCalled();
+  });
+
+  it('should call service.updateStoreConfig with dto and role header', async () => {
+    const dto = { customerOrderingEnabled: false, contactPhone: '0988888888' };
+    await controller.updateStoreConfig(dto, 'ADMIN');
+    expect(service.updateStoreConfig).toHaveBeenCalledWith(dto, 'ADMIN');
   });
 });
