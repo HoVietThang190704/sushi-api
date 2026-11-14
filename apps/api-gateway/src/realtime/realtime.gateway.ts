@@ -14,6 +14,7 @@ export const REALTIME_ROOMS = {
   SUPER_ADMIN: `role:${UserRole.SUPER_ADMIN}`,
   ADMIN: 'role:ADMIN',
   AUTHENTICATED: 'authenticated',
+  PUBLIC_STORE_CONFIG: 'public:store-config',
   branch: (branchId: string) => `branch:${branchId}`,
   order: (orderCode: string) => `order:${orderCode}`,
 } as const;
@@ -98,10 +99,12 @@ export class RealtimeGateway
   async handleConnection(client: Socket): Promise<void> {
     const token = this.extractToken(client);
     if (!token) {
-      this.logger.warn(
-        `Socket connection rejected: missing token (id: ${client.id})`,
+      client.data = client.data || {};
+      client.data.isPublic = true;
+      await client.join(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+      this.logger.log(
+        `Public client connected to store-config room: ${client.id}`,
       );
-      client.disconnect();
       return;
     }
 
@@ -129,6 +132,7 @@ export class RealtimeGateway
         await client.join(`role:${payload.role}`);
       }
       await client.join(REALTIME_ROOMS.AUTHENTICATED);
+      await client.join(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
 
       this.logger.log(
         `Client connected: ${client.id} (user: ${payload.sub || payload.id || 'unknown'}, role: ${payload.role || 'none'}, branch: ${payload.branchId || 'none'})`,
@@ -147,6 +151,14 @@ export class RealtimeGateway
   }
 
   broadcastRealtimeEvent(event: RealtimeDomainEvent): void {
+    if (event.type === 'store-config.updated') {
+      this.server
+        .to(REALTIME_ROOMS.PUBLIC_STORE_CONFIG)
+        .emit('store-config:updated', {
+          timestamp: event.timestamp || new Date().toISOString(),
+        });
+    }
+
     if (event.branchId) {
       this.server
         .to(REALTIME_ROOMS.branch(event.branchId))

@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
-import { RealtimeGateway } from './realtime.gateway';
+import { RealtimeGateway, REALTIME_ROOMS } from './realtime.gateway';
 import { Server, Socket } from 'socket.io';
 import { RealtimeDomainEvent } from '@contracts';
 
@@ -202,7 +202,7 @@ describe('RealtimeGateway', () => {
       expect(mockClient.disconnect).not.toHaveBeenCalled();
     });
 
-    it('should disconnect client when token is missing', async () => {
+    it('should accept anonymous client when token is missing and join only public store config room', async () => {
       const mockClient = {
         id: 'socket-no-token',
         handshake: {
@@ -210,14 +210,45 @@ describe('RealtimeGateway', () => {
           auth: {},
         },
         data: {},
-        join: jest.fn(),
+        join: jest.fn().mockResolvedValue(undefined),
         disconnect: jest.fn(),
       } as unknown as Socket;
 
       await gateway.handleConnection(mockClient);
 
-      expect(mockClient.disconnect).toHaveBeenCalled();
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
       expect(jwtService.verifyAsync).not.toHaveBeenCalled();
+      expect(mockClient.join).toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+      expect(mockClient.join).not.toHaveBeenCalledWith(REALTIME_ROOMS.AUTHENTICATED);
+      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringMatching(/^(role:|branch:|order:)/));
+    });
+
+    it('should disconnect client with invalid token even if auth.isPublic is present', async () => {
+      const mockClient = {
+        id: 'socket-invalid-public',
+        handshake: {
+          headers: {
+            authorization: 'Bearer malformed-token',
+          },
+          auth: {
+            isPublic: true,
+          },
+        },
+        data: {},
+        join: jest.fn(),
+        disconnect: jest.fn(),
+      } as unknown as Socket;
+
+      (jwtService.verifyAsync as jest.Mock).mockRejectedValue(
+        new Error('jwt malformed'),
+      );
+
+      await gateway.handleConnection(mockClient);
+
+      expect(jwtService.verifyAsync).toHaveBeenCalledWith('malformed-token', {
+        secret: expect.any(String),
+      });
+      expect(mockClient.disconnect).toHaveBeenCalled();
       expect(mockClient.join).not.toHaveBeenCalled();
     });
 
@@ -311,6 +342,29 @@ describe('RealtimeGateway', () => {
         status: 'PREPARING',
         paymentStatus: undefined,
         timestamp: '2026-11-05T10:00:00.000Z',
+      });
+      expect(mockServer.to).not.toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+    });
+
+    it('should emit store-config:updated to public store config room and not leak order details', () => {
+      const event: RealtimeDomainEvent = {
+        id: 'event-config-1',
+        type: 'store-config.updated',
+        resource: 'order',
+        action: 'UPDATED',
+        branchId: null,
+        timestamp: '2026-11-14T12:00:00.000Z',
+        payload: {
+          customerOrderingEnabled: false,
+          contactPhone: '0988888888',
+        },
+      };
+
+      gateway.broadcastRealtimeEvent(event);
+
+      expect(mockServer.to).toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+      expect(mockServer.emit).toHaveBeenCalledWith('store-config:updated', {
+        timestamp: '2026-11-14T12:00:00.000Z',
       });
     });
   });
