@@ -515,6 +515,68 @@ describe('InventoryService', () => {
       expect(result).toEqual(created);
     });
 
+    it('should reject deactivating a warehouse that still has linked branches', async () => {
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({
+        id: 'wh-1',
+        code: 'KHO-01',
+        name: 'Kho 1',
+        isActive: true,
+      });
+      (prisma.branch as any).count = jest.fn().mockResolvedValue(2);
+
+      await expect(
+        service.updateWarehouse('wh-1', { isActive: false }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject deleting a warehouse linked to branches', async () => {
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({
+        id: 'wh-1',
+        name: 'Kho 1',
+        _count: { branches: 1, transactions: 0, deductions: 0 },
+      });
+
+      await expect(service.deleteWarehouse('wh-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should soft-deactivate a warehouse that has transaction history', async () => {
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({
+        id: 'wh-1',
+        name: 'Kho 1',
+        _count: { branches: 0, transactions: 3, deductions: 0 },
+      });
+      const update = jest.fn().mockResolvedValue({});
+      const del = jest.fn();
+      (prisma.warehouse as any).update = update;
+      (prisma.warehouse as any).delete = del;
+
+      const result = await service.deleteWarehouse('wh-1');
+
+      expect(result).toEqual({ id: 'wh-1', deleted: false, deactivated: true });
+      expect(update).toHaveBeenCalledWith({
+        where: { id: 'wh-1' },
+        data: { isActive: false },
+      });
+      expect(del).not.toHaveBeenCalled();
+    });
+
+    it('should hard-delete a warehouse without branches or history', async () => {
+      (prisma.warehouse.findUnique as jest.Mock).mockResolvedValue({
+        id: 'wh-1',
+        name: 'Kho 1',
+        _count: { branches: 0, transactions: 0, deductions: 0 },
+      });
+      const del = jest.fn().mockResolvedValue({});
+      (prisma.warehouse as any).delete = del;
+
+      const result = await service.deleteWarehouse('wh-1');
+
+      expect(result).toEqual({ id: 'wh-1', deleted: true, deactivated: false });
+      expect(del).toHaveBeenCalledWith({ where: { id: 'wh-1' } });
+    });
+
     it('should return stocks for a given warehouse', async () => {
       const mockStocks = [
         {

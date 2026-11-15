@@ -162,6 +162,56 @@ describe('ShippingService', () => {
     });
   });
 
+  describe('branch management', () => {
+    it('public getBranches only returns active branches without internal counts', async () => {
+      await service.getBranches();
+      expect(prismaMock.branch.findMany).toHaveBeenCalledWith({
+        where: { isActive: true },
+        orderBy: { name: 'asc' },
+      });
+    });
+
+    it('rejects creating a branch with a duplicate code', async () => {
+      prismaMock.branch.findUnique = jest
+        .fn()
+        .mockResolvedValue({ id: 'b1', code: 'HANBI-Q1' });
+      await expect(
+        service.createBranch({
+          code: 'hanbi-q1',
+          name: 'Dup',
+          address: 'x',
+          phone: '0900000000',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('soft-deactivates a branch that already has orders', async () => {
+      prismaMock.branch.findUnique = jest.fn().mockResolvedValue({
+        id: 'b1',
+        _count: { orders: 4, shippingRules: 1 },
+      });
+      prismaMock.branch.update = jest.fn().mockResolvedValue({});
+      prismaMock.branch.delete = jest.fn();
+
+      const res = await service.deleteBranch('b1');
+
+      expect(res).toEqual({ id: 'b1', deleted: false, deactivated: true });
+      expect(prismaMock.branch.delete).not.toHaveBeenCalled();
+    });
+
+    it('hard-deletes a branch without orders', async () => {
+      prismaMock.branch.findUnique = jest.fn().mockResolvedValue({
+        id: 'b2',
+        _count: { orders: 0, shippingRules: 0 },
+      });
+      prismaMock.branch.delete = jest.fn().mockResolvedValue({});
+
+      const res = await service.deleteBranch('b2');
+
+      expect(res).toEqual({ id: 'b2', deleted: true, deactivated: false });
+    });
+  });
+
   describe('getShippingRules branch isolation', () => {
     const managerUser = {
       sub: 'manager-1',

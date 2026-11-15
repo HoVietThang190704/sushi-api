@@ -14,6 +14,8 @@ import {
   CreateShippingRuleDto,
   UpdateShippingRuleDto,
   CalculateShippingDto,
+  CreateBranchDto,
+  UpdateBranchDto,
 } from './dto/shipping-rule.dto';
 import { RolesGuard, Roles, CurrentUser } from '@common';
 import type { RequestUser } from '@common';
@@ -25,6 +27,34 @@ export class ShippingController {
   @Get('branches')
   async getBranches() {
     return this.shippingService.getBranches();
+  }
+
+  @Get('branches/manage')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async getBranchesForAdmin() {
+    return this.shippingService.getBranchesForAdmin();
+  }
+
+  @Post('branches')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async createBranch(@Body() dto: CreateBranchDto) {
+    return this.shippingService.createBranch(dto);
+  }
+
+  @Patch('branches/:id')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async updateBranch(@Param('id') id: string, @Body() dto: UpdateBranchDto) {
+    return this.shippingService.updateBranch(id, dto);
+  }
+
+  @Delete('branches/:id')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
+  async deleteBranch(@Param('id') id: string) {
+    return this.shippingService.deleteBranch(id);
   }
 
   @Get('locations')

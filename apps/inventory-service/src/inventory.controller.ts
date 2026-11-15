@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Query,
@@ -12,7 +13,10 @@ import { InventoryService } from './inventory.service';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
-import { CreateWarehouseDto } from './dto/create-warehouse.dto';
+import {
+  CreateWarehouseDto,
+  UpdateWarehouseDto,
+} from './dto/create-warehouse.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import { RolesGuard, Roles, CurrentUser } from '@common';
@@ -69,6 +73,18 @@ export class InventoryController {
   @Roles('SUPER_ADMIN')
   createWarehouse(@Body() dto: CreateWarehouseDto) {
     return this.inventoryService.createWarehouse(dto);
+  }
+
+  @Patch('warehouses/:id')
+  @Roles('SUPER_ADMIN')
+  updateWarehouse(@Param('id') id: string, @Body() dto: UpdateWarehouseDto) {
+    return this.inventoryService.updateWarehouse(id, dto);
+  }
+
+  @Delete('warehouses/:id')
+  @Roles('SUPER_ADMIN')
+  deleteWarehouse(@Param('id') id: string) {
+    return this.inventoryService.deleteWarehouse(id);
   }
 
   @Get('warehouses/:id/stocks')

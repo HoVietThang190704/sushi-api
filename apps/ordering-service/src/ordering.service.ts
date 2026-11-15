@@ -38,7 +38,7 @@ export class OrderingService {
     private readonly rabbitmqService: RabbitMQService,
     private readonly jwtService: JwtService,
     private readonly shippingService: ShippingService,
-  ) { }
+  ) {}
 
   private generateOrderCode(): string {
     const now = new Date();
@@ -839,9 +839,9 @@ export class OrderingService {
     const updated = await this.prisma.$transaction(async (tx) => {
       const current = tx.order?.findUnique
         ? await tx.order.findUnique({
-          where: { id: order.id },
-          select: { id: true, status: true, code: true, branchId: true },
-        })
+            where: { id: order.id },
+            select: { id: true, status: true, code: true, branchId: true },
+          })
         : order;
 
       if (
@@ -1228,13 +1228,13 @@ export class OrderingService {
           const stockRecord = batchedStockMap
             ? (batchedStockMap.get(req.ingredientId) ?? null)
             : await this.prisma.warehouseStock.findUnique({
-              where: {
-                warehouseId_ingredientId: {
-                  warehouseId,
-                  ingredientId: req.ingredientId,
+                where: {
+                  warehouseId_ingredientId: {
+                    warehouseId,
+                    ingredientId: req.ingredientId,
+                  },
                 },
-              },
-            });
+              });
 
           const available = stockRecord ? Number(stockRecord.currentStock) : 0;
           if (available < req.quantity) {
@@ -1267,9 +1267,9 @@ export class OrderingService {
         // Kiểm tra concurrency: đảm bảo trạng thái đơn không bị thay đổi bởi thao tác khác
         const currentOrder = tx.order?.findUnique
           ? await tx.order.findUnique({
-            where: { id: orderId },
-            select: { id: true, status: true, code: true, branchId: true },
-          })
+              where: { id: orderId },
+              select: { id: true, status: true, code: true, branchId: true },
+            })
           : order;
 
         if (!currentOrder || currentOrder.status !== order.status) {
@@ -1303,8 +1303,8 @@ export class OrderingService {
           // Đảm bảo idempotent trong transaction
           const txExistingDeduction = tx.orderRecipeDeduction?.findUnique
             ? await tx.orderRecipeDeduction.findUnique({
-              where: { orderId: order.id },
-            })
+                where: { orderId: order.id },
+              })
             : null;
           if (txExistingDeduction) {
             throw new BadRequestException(

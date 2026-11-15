@@ -109,7 +109,7 @@ describe('CatalogServiceController', () => {
 
       const result = await controller.getProducts();
       expect(result).toEqual(expected);
-      expect(service.getProducts).toHaveBeenCalledWith(undefined);
+      expect(service.getProducts).toHaveBeenCalledWith(undefined, false);
     });
   });
 });

@@ -13,7 +13,10 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CatalogServiceService } from './catalog-service.service';
-import { CreateCategoryDto, UpdateCategoryDto } from './dto/create-category.dto';
+import {
+  CreateCategoryDto,
+  UpdateCategoryDto,
+} from './dto/create-category.dto';
 import { CreateProductDto, UpdateProductDto } from './dto/create-product.dto';
 import { RolesGuard, Roles, CloudinaryService } from '@common';
 
@@ -109,10 +112,7 @@ export class CatalogServiceController {
   @Patch('products/:id')
   @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
   @UseGuards(RolesGuard)
-  async updateProduct(
-    @Param('id') id: string,
-    @Body() dto: UpdateProductDto,
-  ) {
+  async updateProduct(@Param('id') id: string, @Body() dto: UpdateProductDto) {
     return this.catalogService.updateProduct(id, dto);
   }
 

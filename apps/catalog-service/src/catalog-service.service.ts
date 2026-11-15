@@ -4,7 +4,10 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
-import { CreateCategoryDto, UpdateCategoryDto } from './dto/create-category.dto';
+import {
+  CreateCategoryDto,
+  UpdateCategoryDto,
+} from './dto/create-category.dto';
 import { CreateProductDto, UpdateProductDto } from './dto/create-product.dto';
 import { Prisma } from '@prisma/client';
 import { RabbitMQService } from '@common/rabbitmq';
@@ -321,11 +324,15 @@ export class CatalogServiceService {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.barcode !== undefined ? { barcode: dto.barcode || null } : {}),
         ...(dto.type !== undefined ? { type: dto.type } : {}),
-        ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId || null } : {}),
+        ...(dto.categoryId !== undefined
+          ? { categoryId: dto.categoryId || null }
+          : {}),
         ...(dto.sellingPrice !== undefined
           ? { sellingPrice: new Prisma.Decimal(dto.sellingPrice) }
           : {}),
-        ...(dto.imageUrl !== undefined ? { imageUrl: dto.imageUrl || null } : {}),
+        ...(dto.imageUrl !== undefined
+          ? { imageUrl: dto.imageUrl || null }
+          : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
       include: {

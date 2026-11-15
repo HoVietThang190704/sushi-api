@@ -9,7 +9,10 @@ import { PrismaService } from './prisma.service';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
 import { TransactionQueryDto } from './dto/transaction-query.dto';
-import { CreateWarehouseDto } from './dto/create-warehouse.dto';
+import {
+  CreateWarehouseDto,
+  UpdateWarehouseDto,
+} from './dto/create-warehouse.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { UpsertRecipeDto } from './dto/upsert-recipe.dto';
 import {
@@ -546,6 +549,14 @@ export class InventoryService {
         : { isActive: true },
       orderBy: { createdAt: 'desc' },
       include: {
+        branches: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            isActive: true,
+          },
+        },
         _count: {
           select: {
             stocks: true,
@@ -564,7 +575,7 @@ export class InventoryService {
       throw new BadRequestException(`Mã kho "${dto.code}" đã tồn tại!`);
     }
 
-    return this.prisma.warehouse.create({
+    const created = await this.prisma.warehouse.create({
       data: {
         code: dto.code.trim().toUpperCase(),
         name: dto.name.trim(),
@@ -572,6 +583,139 @@ export class InventoryService {
         isActive: true,
       },
     });
+
+    if (
+      this.prisma.warehouseStock?.createMany &&
+      this.prisma.ingredient?.findMany
+    ) {
+      const activeIngredients = await this.prisma.ingredient.findMany({
+        where: { isActive: true },
+        select: { id: true, minStock: true },
+      });
+      if (Array.isArray(activeIngredients) && activeIngredients.length > 0) {
+        await this.prisma.warehouseStock.createMany({
+          data: activeIngredients.map((ing) => ({
+            warehouseId: created.id,
+            ingredientId: ing.id,
+            currentStock: 0,
+            minStock: ing.minStock || 0,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
+    return created;
+  }
+
+  async updateWarehouse(id: string, dto: UpdateWarehouseDto) {
+    const existing = await this.prisma.warehouse.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Không tìm thấy kho có ID "${id}"`);
+    }
+
+    const nextCode = dto.code ? dto.code.trim().toUpperCase() : undefined;
+    if (nextCode && nextCode !== existing.code) {
+      const duplicate = await this.prisma.warehouse.findUnique({
+        where: { code: nextCode },
+      });
+      if (duplicate) {
+        throw new BadRequestException(`Mã kho "${nextCode}" đã tồn tại!`);
+      }
+    }
+
+    if (
+      dto.isActive === false &&
+      existing.isActive &&
+      this.prisma.branch?.count
+    ) {
+      const linkedBranches = await this.prisma.branch.count({
+        where: { warehouseId: id },
+      });
+      if (linkedBranches > 0) {
+        throw new BadRequestException(
+          `Không thể tạm ngừng kho "${existing.name}" vì đang có ${linkedBranches} chi nhánh liên kết. Vui lòng chuyển chi nhánh sang kho khác trước!`,
+        );
+      }
+    }
+
+    return this.prisma.warehouse.update({
+      where: { id },
+      data: {
+        ...(nextCode ? { code: nextCode } : {}),
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.address !== undefined
+          ? { address: dto.address?.trim() || null }
+          : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+      include: {
+        branches: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            isActive: true,
+          },
+        },
+        _count: {
+          select: {
+            stocks: true,
+            branches: true,
+          },
+        },
+      },
+    });
+  }
+
+  async deleteWarehouse(id: string) {
+    const existing = await this.prisma.warehouse.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            branches: true,
+            transactions: true,
+            deductions: true,
+          },
+        },
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Không tìm thấy kho có ID "${id}"`);
+    }
+
+    if ((existing._count?.branches || 0) > 0) {
+      throw new BadRequestException(
+        `Không thể xóa kho "${existing.name}" vì đang có ${existing._count.branches} chi nhánh liên kết. Vui lòng chuyển chi nhánh sang kho khác trước!`,
+      );
+    }
+
+    if (
+      (existing._count?.transactions || 0) > 0 ||
+      (existing._count?.deductions || 0) > 0
+    ) {
+      await this.prisma.warehouse.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return {
+        id,
+        deleted: false,
+        deactivated: true,
+      };
+    }
+
+    await this.prisma.warehouse.delete({
+      where: { id },
+    });
+    return {
+      id,
+      deleted: true,
+      deactivated: false,
+    };
   }
 
   async getWarehouseStocks(warehouseId: string, user?: RequestUser) {

@@ -10,6 +10,8 @@ import {
   CreateShippingRuleDto,
   UpdateShippingRuleDto,
   CalculateShippingDto,
+  CreateBranchDto,
+  UpdateBranchDto,
 } from './dto/shipping-rule.dto';
 import { VietnamAddressService } from './vietnam-address.service';
 
@@ -41,12 +43,159 @@ export class ShippingService {
     private readonly vietnamAddressService: VietnamAddressService,
   ) {}
 
-  // 1. Lấy toàn bộ danh sách chi nhánh
+  // 1. Danh sách chi nhánh công khai (Storefront): chỉ chi nhánh đang hoạt động, không lộ dữ liệu nội bộ
   async getBranches() {
     return this.prisma.branch.findMany({
       where: { isActive: true },
       orderBy: { name: 'asc' },
     });
+  }
+
+  // 1b. Danh sách chi nhánh quản trị: gồm cả chi nhánh tạm ngừng, kho liên kết và thống kê
+  async getBranchesForAdmin() {
+    return this.prisma.branch.findMany({
+      include: {
+        warehouse: {
+          select: { id: true, code: true, name: true, address: true },
+        },
+        _count: {
+          select: { orders: true, shippingRules: true },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createBranch(dto: CreateBranchDto) {
+    const cleanCode = dto.code.trim().toUpperCase();
+    const existing = await this.prisma.branch.findUnique({
+      where: { code: cleanCode },
+    });
+    if (existing) {
+      throw new BadRequestException(`Mã chi nhánh "${cleanCode}" đã tồn tại!`);
+    }
+
+    const cleanWarehouseId = dto.warehouseId?.trim() || null;
+    if (cleanWarehouseId && this.prisma.warehouse?.findUnique) {
+      const wh = await this.prisma.warehouse.findUnique({
+        where: { id: cleanWarehouseId },
+      });
+      if (!wh) {
+        throw new BadRequestException(
+          'Kho nguyên vật liệu được chọn không tồn tại!',
+        );
+      }
+    }
+
+    return this.prisma.branch.create({
+      data: {
+        code: cleanCode,
+        name: dto.name.trim(),
+        address: dto.address.trim(),
+        phone: dto.phone.trim(),
+        warehouseId: cleanWarehouseId,
+        isActive: dto.isActive ?? true,
+      },
+      include: {
+        warehouse: {
+          select: { id: true, code: true, name: true, address: true },
+        },
+        _count: {
+          select: { orders: true, shippingRules: true },
+        },
+      },
+    });
+  }
+
+  async updateBranch(id: string, dto: UpdateBranchDto) {
+    const existing = await this.prisma.branch.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Không tìm thấy chi nhánh có ID "${id}"`);
+    }
+
+    const nextCode = dto.code ? dto.code.trim().toUpperCase() : undefined;
+    if (nextCode && nextCode !== existing.code) {
+      const duplicate = await this.prisma.branch.findUnique({
+        where: { code: nextCode },
+      });
+      if (duplicate) {
+        throw new BadRequestException(`Mã chi nhánh "${nextCode}" đã tồn tại!`);
+      }
+    }
+
+    let nextWarehouseId: string | null | undefined = undefined;
+    if (dto.warehouseId !== undefined) {
+      nextWarehouseId = dto.warehouseId?.trim() || null;
+      if (nextWarehouseId && this.prisma.warehouse?.findUnique) {
+        const wh = await this.prisma.warehouse.findUnique({
+          where: { id: nextWarehouseId },
+        });
+        if (!wh) {
+          throw new BadRequestException(
+            'Kho nguyên vật liệu được chọn không tồn tại!',
+          );
+        }
+      }
+    }
+
+    return this.prisma.branch.update({
+      where: { id },
+      data: {
+        ...(nextCode ? { code: nextCode } : {}),
+        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.address !== undefined ? { address: dto.address.trim() } : {}),
+        ...(dto.phone !== undefined ? { phone: dto.phone.trim() } : {}),
+        ...(nextWarehouseId !== undefined
+          ? { warehouseId: nextWarehouseId }
+          : {}),
+        ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      },
+      include: {
+        warehouse: {
+          select: { id: true, code: true, name: true, address: true },
+        },
+        _count: {
+          select: { orders: true, shippingRules: true },
+        },
+      },
+    });
+  }
+
+  async deleteBranch(id: string) {
+    const existing = await this.prisma.branch.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { orders: true, shippingRules: true },
+        },
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Không tìm thấy chi nhánh có ID "${id}"`);
+    }
+
+    if ((existing._count?.orders || 0) > 0) {
+      await this.prisma.branch.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return {
+        id,
+        deleted: false,
+        deactivated: true,
+      };
+    }
+
+    await this.prisma.branch.delete({
+      where: { id },
+    });
+    return {
+      id,
+      deleted: true,
+      deactivated: false,
+    };
   }
 
   // 2. Lấy danh sách quy tắc phí ship (Dành cho Admin / Quản lý / Thu ngân theo chi nhánh)
