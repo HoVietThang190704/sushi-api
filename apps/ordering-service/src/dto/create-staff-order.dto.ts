@@ -4,7 +4,6 @@ import {
   IsOptional,
   IsArray,
   ValidateNested,
-  IsUUID,
   IsEmail,
   Matches,
 } from 'class-validator';
@@ -19,7 +18,8 @@ export class CreateStaffOrderDto {
   @IsString()
   @IsNotEmpty({ message: 'Số điện thoại khách hàng không được để trống' })
   @Matches(/^(0|\+84)[35789]\d{8}$/, {
-    message: 'Số điện thoại không hợp lệ (yêu cầu số điện thoại Việt Nam 10 chữ số)',
+    message:
+      'Số điện thoại không hợp lệ (yêu cầu số điện thoại Việt Nam 10 chữ số)',
   })
   customerPhone!: string;
 
@@ -43,7 +43,10 @@ export class CreateStaffOrderDto {
   @IsNotEmpty({ message: 'Phường/Xã không được để trống' })
   ward!: string;
 
-  @IsUUID('all', { message: 'Mã chi nhánh phục vụ không hợp lệ' })
+  @IsString()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'Mã chi nhánh phục vụ không hợp lệ',
+  })
   @IsNotEmpty({ message: 'Vui lòng chọn chi nhánh phục vụ' })
   branchId!: string;
 

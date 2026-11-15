@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
@@ -18,7 +19,10 @@ import {
   Prisma,
 } from '@prisma/client';
 import { RabbitMQService } from '@common/rabbitmq';
-import { createRealtimeEvent, RealtimeDomainEvent } from '@contracts';
+import { OutboxDispatcherService } from '@common/outbox';
+import { createRealtimeEvent } from '@contracts';
+import { randomBytes } from 'crypto';
+import type { RequestUser } from '@common';
 
 @Injectable()
 export class InventoryService {
@@ -33,18 +37,70 @@ export class InventoryService {
     const prefix = type === TransactionType.IN ? 'PNK' : 'PXK';
     const now = new Date();
     const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
-    const rand = Math.floor(1000 + Math.random() * 9000);
+    const rand = randomBytes(3).toString('hex').toUpperCase();
     return `${prefix}-${dateStr}-${rand}`;
   }
 
-  async getIngredients() {
+  private async resolveAuthorizedWarehouseId(
+    user?: RequestUser,
+    requestedWarehouseId?: string,
+  ): Promise<string | undefined> {
+    if (!user || user.role === 'SUPER_ADMIN') {
+      return requestedWarehouseId;
+    }
+
+    if (!user.branchId) {
+      throw new ForbiddenException(
+        'Tài khoản nhân viên chưa được gán chi nhánh hoạt động!',
+      );
+    }
+
+    if (!this.prisma.branch?.findUnique) {
+      throw new ForbiddenException(
+        'Không thể xác minh chi nhánh hoạt động của tài khoản!',
+      );
+    }
+
+    const branch = await this.prisma.branch.findUnique({
+      where: { id: user.branchId },
+    });
+
+    if (!branch || branch.isActive === false) {
+      throw new ForbiddenException(
+        'Không tìm thấy chi nhánh hoạt động được gán cho tài khoản!',
+      );
+    }
+
+    if (!branch.warehouseId) {
+      throw new ForbiddenException(
+        'Chi nhánh của bạn chưa được gán kho nguyên vật liệu!',
+      );
+    }
+
+    if (requestedWarehouseId && branch.warehouseId !== requestedWarehouseId) {
+      throw new ForbiddenException(
+        'Bạn chỉ có quyền thao tác trên kho nguyên vật liệu thuộc chi nhánh của mình!',
+      );
+    }
+
+    return branch.warehouseId;
+  }
+
+  async getIngredients(user?: RequestUser) {
+    const authorizedWarehouseId = await this.resolveAuthorizedWarehouseId(user);
     const items = await this.prisma.ingredient.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'desc' },
       include: {
-        warehouseStocks: true,
+        warehouseStocks: authorizedWarehouseId
+          ? { where: { warehouseId: authorizedWarehouseId } }
+          : true,
         _count: {
-          select: { transactions: true },
+          select: {
+            transactions: authorizedWarehouseId
+              ? { where: { warehouseId: authorizedWarehouseId } }
+              : true,
+          },
         },
       },
     });
@@ -52,13 +108,21 @@ export class InventoryService {
     return items.map((item) => {
       const hasWarehouseStocks =
         item.warehouseStocks && item.warehouseStocks.length > 0;
-      const stock = hasWarehouseStocks
+      const stock = authorizedWarehouseId
         ? item.warehouseStocks.reduce(
             (sum, ws) => sum + Number(ws.currentStock),
             0,
           )
-        : Number(item.currentStock);
-      const min = Number(item.minStock);
+        : hasWarehouseStocks
+          ? item.warehouseStocks.reduce(
+              (sum, ws) => sum + Number(ws.currentStock),
+              0,
+            )
+          : Number(item.currentStock);
+      const min =
+        authorizedWarehouseId && hasWarehouseStocks
+          ? Number(item.warehouseStocks[0].minStock)
+          : Number(item.minStock);
 
       let status: 'OUT_OF_STOCK' | 'LOW_STOCK' | 'SAFE' = 'SAFE';
       if (stock <= 0) {
@@ -138,6 +202,8 @@ export class InventoryService {
               eventType: event.type,
               payload: event as unknown as Prisma.InputJsonValue,
               status: OutboxStatus.PENDING,
+              claimedBy: 'inline-publisher',
+              claimedUntil: new Date(Date.now() + 15_000),
             },
           });
         }
@@ -154,7 +220,14 @@ export class InventoryService {
           data: {
             status: OutboxStatus.PUBLISHED,
             publishedAt: new Date(),
+            claimedBy: null,
+            claimedUntil: null,
           },
+        });
+      } else if (!published && outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent.updateMany({
+          where: { id: outbox.id, claimedBy: 'inline-publisher' },
+          data: { claimedBy: null, claimedUntil: null },
         });
       }
     } catch (err: unknown) {
@@ -162,12 +235,28 @@ export class InventoryService {
       this.logger.warn(
         `RabbitMQ publish failed for ingredient.created: ${message}`,
       );
+      if (outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent
+          .updateMany({
+            where: { id: outbox.id, claimedBy: 'inline-publisher' },
+            data: { claimedBy: null, claimedUntil: null },
+          })
+          .catch(() => undefined);
+      }
     }
 
     return ingredient;
   }
 
-  async createTransaction(dto: CreateTransactionDto) {
+  async createTransaction(dto: CreateTransactionDto, user?: RequestUser) {
+    const authorizedWarehouseId = await this.resolveAuthorizedWarehouseId(
+      user,
+      dto.warehouseId,
+    );
+    const actor = user
+      ? user.email || user.sub || user.role
+      : dto.createdBy || 'ADMIN';
+
     const qty = Number(dto.quantity);
     if (qty <= 0) {
       throw new BadRequestException('Số lượng giao dịch phải lớn hơn 0');
@@ -186,30 +275,26 @@ export class InventoryService {
         } | null = null;
 
         // Lock row in PostgreSQL to prevent concurrent race condition
-        try {
-          if (tx.$queryRaw) {
-            const locked = await tx.$queryRaw<
-              Array<{
-                id: string;
-                code: string;
-                name: string;
-                unit: string;
-                currentStock: number | Prisma.Decimal;
-                costPrice: number | Prisma.Decimal;
-                minStock?: number | Prisma.Decimal;
-              }>
-            >`
+        if (typeof tx.$queryRaw === 'function') {
+          const locked = await tx.$queryRaw<
+            Array<{
+              id: string;
+              code: string;
+              name: string;
+              unit: string;
+              currentStock: number | Prisma.Decimal;
+              costPrice: number | Prisma.Decimal;
+              minStock?: number | Prisma.Decimal;
+            }>
+          >`
             SELECT id, code, name, unit, current_stock AS "currentStock", cost_price AS "costPrice", min_stock AS "minStock"
             FROM inventory.ingredients
             WHERE id = ${dto.ingredientId}::uuid
             FOR UPDATE
           `;
-            if (locked && locked.length > 0) {
-              ingredient = locked[0];
-            }
+          if (Array.isArray(locked) && locked.length > 0) {
+            ingredient = locked[0];
           }
-        } catch {
-          // Fallback if raw query is not supported by mock/provider
         }
 
         if (!ingredient) {
@@ -232,6 +317,54 @@ export class InventoryService {
 
         const currentStock = Number(ingredient.currentStock);
 
+        let targetWarehouseId = authorizedWarehouseId || dto.warehouseId;
+        if (
+          !targetWarehouseId &&
+          (!user || user.role === 'SUPER_ADMIN') &&
+          tx.warehouse?.findFirst
+        ) {
+          const defaultWh = await tx.warehouse.findFirst({
+            where: { isActive: true },
+            orderBy: { createdAt: 'asc' },
+          });
+          targetWarehouseId = defaultWh?.id;
+        }
+
+        let ws: { id: string; currentStock: any; minStock?: any } | null = null;
+        if (targetWarehouseId && tx.warehouseStock) {
+          if (typeof tx.$queryRaw === 'function') {
+            const wsRows = await tx.$queryRaw<
+              Array<{ id: string; currentStock: any; minStock?: any }>
+            >`
+              SELECT id, current_stock AS "currentStock", min_stock AS "minStock"
+              FROM inventory.warehouse_stocks
+              WHERE warehouse_id = ${targetWarehouseId}::uuid AND ingredient_id = ${dto.ingredientId}::uuid
+              FOR UPDATE
+            `;
+            if (Array.isArray(wsRows) && wsRows.length > 0) {
+              ws = wsRows[0];
+            }
+          }
+
+          if (!ws && tx.warehouseStock.findUnique) {
+            ws = await tx.warehouseStock.findUnique({
+              where: {
+                warehouseId_ingredientId: {
+                  warehouseId: targetWarehouseId,
+                  ingredientId: dto.ingredientId,
+                },
+              },
+            });
+          }
+
+          const warehouseCurrentStock = ws ? Number(ws.currentStock) : 0;
+          if (dto.type === TransactionType.OUT && warehouseCurrentStock < qty) {
+            throw new BadRequestException(
+              `Kho không đủ tồn nguyên liệu "${ingredient.name}" để xuất! Tồn tại kho: ${warehouseCurrentStock} ${ingredient.unit}, yêu cầu xuất: ${qty} ${ingredient.unit}`,
+            );
+          }
+        }
+
         if (dto.type === TransactionType.OUT && currentStock < qty) {
           throw new BadRequestException(
             `Số lượng tồn không đủ để xuất! Tồn hiện tại: ${currentStock} ${ingredient.unit}, yêu cầu xuất: ${qty} ${ingredient.unit}`,
@@ -245,15 +378,6 @@ export class InventoryService {
         const totalAmount = qty * unitPrice;
         const code = this.generateCode(dto.type);
 
-        let targetWarehouseId = dto.warehouseId;
-        if (!targetWarehouseId && tx.warehouse?.findFirst) {
-          const defaultWh = await tx.warehouse.findFirst({
-            where: { isActive: true },
-            orderBy: { createdAt: 'asc' },
-          });
-          targetWarehouseId = defaultWh?.id;
-        }
-
         const txRecord = await tx.inventoryTransaction.create({
           data: {
             code,
@@ -265,7 +389,7 @@ export class InventoryService {
             unitPrice,
             totalAmount,
             note: dto.note,
-            createdBy: dto.createdBy || 'ADMIN',
+            createdBy: actor,
           },
           include: {
             ingredient: true,
@@ -273,17 +397,6 @@ export class InventoryService {
         });
 
         if (targetWarehouseId && tx.warehouseStock) {
-          let ws = tx.warehouseStock.findUnique
-            ? await tx.warehouseStock.findUnique({
-                where: {
-                  warehouseId_ingredientId: {
-                    warehouseId: targetWarehouseId,
-                    ingredientId: dto.ingredientId,
-                  },
-                },
-              })
-            : null;
-
           if (!ws && tx.warehouseStock.create) {
             ws = await tx.warehouseStock.create({
               data: {
@@ -342,6 +455,8 @@ export class InventoryService {
               eventType: event.type,
               payload: event as unknown as Prisma.InputJsonValue,
               status: OutboxStatus.PENDING,
+              claimedBy: 'inline-publisher',
+              claimedUntil: new Date(Date.now() + 15_000),
             },
           });
         }
@@ -358,21 +473,38 @@ export class InventoryService {
           data: {
             status: OutboxStatus.PUBLISHED,
             publishedAt: new Date(),
+            claimedBy: null,
+            claimedUntil: null,
           },
+        });
+      } else if (!published && outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent.updateMany({
+          where: { id: outbox.id, claimedBy: 'inline-publisher' },
+          data: { claimedBy: null, claimedUntil: null },
         });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`RabbitMQ publish failed for stock.updated: ${message}`);
+      if (outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent
+          .updateMany({
+            where: { id: outbox.id, claimedBy: 'inline-publisher' },
+            data: { claimedBy: null, claimedUntil: null },
+          })
+          .catch(() => undefined);
+      }
     }
 
     return transaction;
   }
 
-  async getTransactions(query: TransactionQueryDto) {
+  async getTransactions(query: TransactionQueryDto, user?: RequestUser) {
+    const authorizedWarehouseId = await this.resolveAuthorizedWarehouseId(user);
     const where: Prisma.InventoryTransactionWhereInput = {};
     if (query.type) where.type = query.type;
     if (query.ingredientId) where.ingredientId = query.ingredientId;
+    if (authorizedWarehouseId) where.warehouseId = authorizedWarehouseId;
 
     return this.prisma.inventoryTransaction.findMany({
       where,
@@ -389,59 +521,29 @@ export class InventoryService {
     });
   }
 
-  async getAlerts() {
-    const ingredients = await this.getIngredients();
+  async getAlerts(user?: RequestUser) {
+    const ingredients = await this.getIngredients(user);
     return ingredients.filter((item) => item.isAlert);
   }
 
   async dispatchPendingOutboxEvents(batchSize = 20): Promise<number> {
-    if (!this.prisma.outboxEvent) return 0;
-
-    const pendingEvents = await this.prisma.outboxEvent.findMany({
-      where: {
-        status: OutboxStatus.PENDING,
-      },
-      take: batchSize,
-      orderBy: { createdAt: 'asc' },
-    });
-
-    let successCount = 0;
-    for (const record of pendingEvents) {
-      try {
-        const payload = record.payload as unknown as RealtimeDomainEvent;
-        const published = await this.rabbitmqService.publishEvent(payload);
-        if (published) {
-          await this.prisma.outboxEvent.update({
-            where: { id: record.id },
-            data: {
-              status: OutboxStatus.PUBLISHED,
-              publishedAt: new Date(),
-            },
-          });
-          successCount++;
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        await this.prisma.outboxEvent.update({
-          where: { id: record.id },
-          data: {
-            retryCount: { increment: 1 },
-            lastError: message,
-          },
-        });
-      }
-    }
-
-    return successCount;
+    const dispatcher = new OutboxDispatcherService(
+      this.prisma,
+      this.rabbitmqService,
+    );
+    return dispatcher.dispatchBatch(batchSize);
   }
 
   // ==========================================
   // WAREHOUSES & WAREHOUSE STOCKS
   // ==========================================
 
-  async getWarehouses() {
+  async getWarehouses(user?: RequestUser) {
+    const authorizedWarehouseId = await this.resolveAuthorizedWarehouseId(user);
     return this.prisma.warehouse.findMany({
-      where: { isActive: true },
+      where: authorizedWarehouseId
+        ? { isActive: true, id: authorizedWarehouseId }
+        : { isActive: true },
       orderBy: { createdAt: 'desc' },
       include: {
         _count: {
@@ -472,7 +574,9 @@ export class InventoryService {
     });
   }
 
-  async getWarehouseStocks(warehouseId: string) {
+  async getWarehouseStocks(warehouseId: string, user?: RequestUser) {
+    await this.resolveAuthorizedWarehouseId(user, warehouseId);
+
     const stocks = await this.prisma.warehouseStock.findMany({
       where: { warehouseId },
       include: {
@@ -515,7 +619,13 @@ export class InventoryService {
     warehouseId: string,
     ingredientId: string,
     dto: AdjustStockDto,
+    user?: RequestUser,
   ) {
+    await this.resolveAuthorizedWarehouseId(user, warehouseId);
+    const actor = user
+      ? user.email || user.sub || user.role
+      : dto.createdBy || 'ADMIN';
+
     const qty = Number(dto.quantity);
     if (qty <= 0) {
       throw new BadRequestException('Số lượng điều chỉnh phải lớn hơn 0');
@@ -532,18 +642,37 @@ export class InventoryService {
       where: { id: ingredientId },
     });
     if (!ingredient) {
-      throw new NotFoundException(`Không tìm thấy nguyên liệu ID "${ingredientId}"`);
+      throw new NotFoundException(
+        `Không tìm thấy nguyên liệu ID "${ingredientId}"`,
+      );
     }
 
     const { transaction, updatedStockRecord, outbox, event } =
       await this.prisma.$transaction(async (tx) => {
+        if (typeof tx.$queryRaw === 'function') {
+          const lockedIngredients = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM inventory.ingredients
+            WHERE id = ${ingredientId}::uuid
+            FOR UPDATE
+          `;
+          if (
+            Array.isArray(lockedIngredients) &&
+            lockedIngredients.length === 0
+          ) {
+            throw new NotFoundException(
+              `Không tìm thấy nguyên liệu ID "${ingredientId}"`,
+            );
+          }
+        }
+
         let currentStockRecord: {
           id: string;
           currentStock: any;
           minStock?: any;
         } | null = null;
 
-        if (tx.$queryRaw) {
+        if (typeof tx.$queryRaw === 'function') {
           const rows = await tx.$queryRaw<
             Array<{ id: string; currentStock: any; minStock: any }>
           >`
@@ -552,7 +681,7 @@ export class InventoryService {
             WHERE warehouse_id = ${warehouseId}::uuid AND ingredient_id = ${ingredientId}::uuid
             FOR UPDATE
           `;
-          if (rows.length > 0) {
+          if (Array.isArray(rows) && rows.length > 0) {
             currentStockRecord = rows[0];
           }
         }
@@ -601,7 +730,7 @@ export class InventoryService {
             unitPrice,
             totalAmount,
             note: dto.note,
-            createdBy: dto.createdBy || 'ADMIN',
+            createdBy: actor,
           },
         });
 
@@ -652,6 +781,8 @@ export class InventoryService {
               eventType: event.type,
               payload: event as unknown as Prisma.InputJsonValue,
               status: OutboxStatus.PENDING,
+              claimedBy: 'inline-publisher',
+              claimedUntil: new Date(Date.now() + 15_000),
             },
           });
         }
@@ -672,7 +803,14 @@ export class InventoryService {
           data: {
             status: OutboxStatus.PUBLISHED,
             publishedAt: new Date(),
+            claimedBy: null,
+            claimedUntil: null,
           },
+        });
+      } else if (!published && outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent.updateMany({
+          where: { id: outbox.id, claimedBy: 'inline-publisher' },
+          data: { claimedBy: null, claimedUntil: null },
         });
       }
     } catch (err: unknown) {
@@ -680,6 +818,14 @@ export class InventoryService {
       this.logger.warn(
         `RabbitMQ publish failed for warehouse stock update: ${message}`,
       );
+      if (outbox && this.prisma.outboxEvent?.updateMany) {
+        await this.prisma.outboxEvent
+          .updateMany({
+            where: { id: outbox.id, claimedBy: 'inline-publisher' },
+            data: { claimedBy: null, claimedUntil: null },
+          })
+          .catch(() => undefined);
+      }
     }
 
     return {

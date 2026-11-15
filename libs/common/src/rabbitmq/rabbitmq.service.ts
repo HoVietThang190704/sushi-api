@@ -11,7 +11,7 @@ import { REALTIME_EXCHANGE, RealtimeDomainEvent } from '@contracts';
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RabbitMQService.name);
   private connection: amqp.ChannelModel | null = null;
-  private channel: amqp.Channel | null = null;
+  private channel: amqp.ConfirmChannel | null = null;
 
   async onModuleInit(): Promise<void> {
     await this.connect();
@@ -36,7 +36,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
         this.connection = null;
       });
 
-      this.channel = await this.connection.createChannel();
+      this.channel = await this.connection.createConfirmChannel();
 
       this.channel.on('error', (err: Error) => {
         this.logger.warn(`RabbitMQ channel error: ${err.message}`);
@@ -52,7 +52,7 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       });
 
       this.logger.log(
-        `Connected to RabbitMQ and asserted topic exchange "${REALTIME_EXCHANGE}"`,
+        `Connected to RabbitMQ confirm channel and asserted topic exchange "${REALTIME_EXCHANGE}"`,
       );
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -65,13 +65,15 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
   async publishEvent(
     event: RealtimeDomainEvent,
     routingKey?: string,
+    confirmTimeoutMs = 5000,
   ): Promise<boolean> {
     try {
       if (!this.channel) {
         await this.connect();
       }
 
-      if (!this.channel) {
+      const activeChannel = this.channel;
+      if (!activeChannel) {
         this.logger.warn(
           `Cannot publish event "${event.type}": RabbitMQ channel unavailable`,
         );
@@ -81,17 +83,68 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       const key = routingKey || event.type;
       const content = Buffer.from(JSON.stringify(event));
 
-      const published = this.channel.publish(REALTIME_EXCHANGE, key, content, {
-        persistent: true,
-        contentType: 'application/json',
-      });
+      return await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          this.logger.warn(
+            `Timed out waiting for RabbitMQ broker confirm for event "${event.type}"`,
+          );
+          if (this.channel === activeChannel) {
+            this.channel = null;
+          }
+          resolve(false);
+        }, confirmTimeoutMs);
+        timer.unref?.();
 
-      return published;
+        try {
+          activeChannel.publish(
+            REALTIME_EXCHANGE,
+            key,
+            content,
+            {
+              persistent: true,
+              contentType: 'application/json',
+            },
+            (err) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              if (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                this.logger.warn(
+                  `RabbitMQ broker NACK for event "${event.type}": ${reason}`,
+                );
+                resolve(false);
+                return;
+              }
+              resolve(true);
+            },
+          );
+        } catch (publishErr: unknown) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          const message =
+            publishErr instanceof Error
+              ? publishErr.message
+              : String(publishErr);
+          this.logger.warn(
+            `Error publishing event "${event?.type ?? 'unknown'}": ${message}`,
+          );
+          if (this.channel === activeChannel) {
+            this.channel = null;
+          }
+          resolve(false);
+        }
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(
         `Error publishing event "${event?.type ?? 'unknown'}": ${message}`,
       );
+      this.channel = null;
       return false;
     }
   }

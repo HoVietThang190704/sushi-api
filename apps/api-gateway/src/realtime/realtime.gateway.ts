@@ -5,8 +5,10 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
+import type { IncomingMessage } from 'node:http';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
+import { isCorsOriginAllowed } from '../cors.policy';
 import { RealtimeDomainEvent, ORDER_TRACK_SCOPE } from '@contracts';
 import { UserRole } from '@prisma/client';
 
@@ -52,10 +54,33 @@ export interface AuthenticatedUserPayload {
   [key: string]: unknown;
 }
 
+export const isOriginAllowed = isCorsOriginAllowed;
+
 @WebSocketGateway({
   cors: {
-    origin: true,
+    origin: (
+      origin: string,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
+  },
+  allowRequest: (
+    req: IncomingMessage,
+    callback: (err: string | null, success: boolean) => void,
+  ) => {
+    const rawOrigin = req.headers?.origin;
+    const origin = typeof rawOrigin === 'string' ? rawOrigin : undefined;
+    if (isOriginAllowed(origin)) {
+      callback(null, true);
+    } else {
+      callback('Origin not allowed by WebSocket policy', false);
+    }
   },
   namespace: '/realtime',
 })
@@ -97,10 +122,15 @@ export class RealtimeGateway
   }
 
   async handleConnection(client: Socket): Promise<void> {
+    const socketData = (client.data ?? {}) as {
+      isPublic?: boolean;
+      user?: AuthenticatedUserPayload;
+    };
+    client.data = socketData;
+
     const token = this.extractToken(client);
     if (!token) {
-      client.data = client.data || {};
-      client.data.isPublic = true;
+      socketData.isPublic = true;
       await client.join(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
       this.logger.log(
         `Public client connected to store-config room: ${client.id}`,
@@ -109,12 +139,14 @@ export class RealtimeGateway
     }
 
     try {
-      const secret = process.env.JWT_SECRET || 'your-secret-key';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        throw new Error('JWT_SECRET is not configured on server');
+      }
       const payload: AuthenticatedUserPayload =
         await this.jwtService.verifyAsync(token, { secret });
 
-      client.data = client.data || {};
-      client.data.user = payload;
+      socketData.user = payload;
 
       // Guest order tracking token: joins only the specific order room
       if (payload.scope === ORDER_TRACK_SCOPE && payload.orderCode) {

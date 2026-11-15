@@ -47,4 +47,34 @@ describe('RateLimitService', () => {
       await limiter.check('POST', '/api/auth/register', '127.0.0.1'),
     ).toEqual({ allowed: true });
   });
+
+  it('rate limits GET /api/orders/track', async () => {
+    redis.hitLimit.mockResolvedValue({ allowed: false, retryAfterMs: 5000 });
+    const result = await limiter.check(
+      'GET',
+      '/api/orders/track?code=ORD-1',
+      '127.0.0.1',
+    );
+    expect(result).toEqual({ allowed: false, retryAfterSeconds: 5 });
+    expect(redis.hitLimit).toHaveBeenCalledWith(
+      expect.stringContaining('orders:track'),
+      30,
+      60,
+    );
+  });
+
+  it('rate limits POST /api/catalog/upload', async () => {
+    redis.hitLimit.mockResolvedValue({ allowed: false, retryAfterMs: 8000 });
+    const result = await limiter.check(
+      'POST',
+      '/api/catalog/upload',
+      '127.0.0.1',
+    );
+    expect(result).toEqual({ allowed: false, retryAfterSeconds: 8 });
+    expect(redis.hitLimit).toHaveBeenCalledWith(
+      expect.stringContaining('catalog:upload'),
+      20,
+      300,
+    );
+  });
 });

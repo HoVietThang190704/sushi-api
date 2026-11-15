@@ -32,10 +32,10 @@ export class RealtimeConsumerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(
       `Scheduling RabbitMQ reconnect in ${this.reconnectDelayMs}ms...`,
     );
-    this.reconnectTimer = setTimeout(async () => {
+    this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.isDestroyed) {
-        await this.initRabbitMQ();
+        void this.initRabbitMQ();
       }
     }, this.reconnectDelayMs);
   }

@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   CallHandler,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { BaseResponse } from '../dto/base-response.dto';
@@ -15,14 +16,14 @@ export class TransformResponseInterceptor<T> implements NestInterceptor<
 > {
   intercept(
     context: ExecutionContext,
-    next: CallHandler,
+    next: CallHandler<T>,
   ): Observable<BaseResponse<T>> {
     const ctx = context.switchToHttp();
-    const response = ctx.getResponse();
+    const response = ctx.getResponse<Response>();
     const statusCode = response.statusCode || 200;
 
     return next.handle().pipe(
-      map((data) => {
+      map((data: T): BaseResponse<T> => {
         // Nếu response đã có dạng BaseResponse thì giữ nguyên
         if (
           data &&
@@ -30,20 +31,20 @@ export class TransformResponseInterceptor<T> implements NestInterceptor<
           'success' in data &&
           'timestamp' in data
         ) {
-          return data;
+          return data as unknown as BaseResponse<T>;
         }
 
         let message = 'Operation successful';
-        let finalData = data;
+        let finalData: T | null = data !== undefined ? data : null;
 
         // Nếu Controller trả về object có thuộc tính message riêng
         if (
           data &&
           typeof data === 'object' &&
           'message' in data &&
-          typeof data.message === 'string'
+          typeof (data as { message?: unknown }).message === 'string'
         ) {
-          message = data.message;
+          message = (data as { message: string }).message;
           if ('tokens' in data || 'user' in data) {
             finalData = data;
           }
@@ -53,7 +54,7 @@ export class TransformResponseInterceptor<T> implements NestInterceptor<
           success: true,
           statusCode,
           message,
-          data: finalData !== undefined ? finalData : null,
+          data: finalData,
           timestamp: new Date().toISOString(),
         };
       }),

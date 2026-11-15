@@ -7,6 +7,7 @@ import {
   Param,
   Query,
   Headers,
+  UseGuards,
 } from '@nestjs/common';
 import { OrderingService } from './ordering.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -17,7 +18,8 @@ import { CancelOrderDto } from './dto/cancel-order.dto';
 import { GetOrdersDto } from './dto/get-orders.dto';
 import { UpdatePaymentConfigDto } from './dto/update-payment-config.dto';
 import { UpdateStoreConfigDto } from './dto/update-store-config.dto';
-import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { RolesGuard, Roles, CurrentUser } from '@common';
+import type { RequestUser } from '@common';
 
 @Controller('orders')
 export class OrderingController {
@@ -29,11 +31,14 @@ export class OrderingController {
   }
 
   @Patch('store-config')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
   async updateStoreConfig(
     @Body() dto: UpdateStoreConfigDto,
-    @Headers('x-user-role') role?: string,
+    @Headers('x-user-role') headerRole?: string,
+    @CurrentUser('role') userRole?: string,
   ) {
-    return this.orderingService.updateStoreConfig(dto, role);
+    return this.orderingService.updateStoreConfig(dto, userRole || headerRole);
   }
 
   @Get('payment-config')
@@ -42,6 +47,8 @@ export class OrderingController {
   }
 
   @Patch('payment-config')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
   async updatePaymentConfig(@Body() dto: UpdatePaymentConfigDto) {
     return this.orderingService.updatePaymentConfig(dto);
   }
@@ -58,16 +65,23 @@ export class OrderingController {
   }
 
   @Post('staff')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'CASHIER')
+  @UseGuards(RolesGuard)
   async createStaffOrder(
     @Body() dto: CreateStaffOrderDto,
-    @Headers('x-user-id') staffId?: string,
-    @Headers('x-user-role') role?: string,
+    @Headers('x-user-id') headerStaffId?: string,
+    @Headers('x-user-role') headerRole?: string,
     @Headers('x-idempotency-key') idempotencyHeader?: string,
+    @CurrentUser() user?: RequestUser,
   ) {
     if (!dto.idempotencyKey && idempotencyHeader) {
       dto.idempotencyKey = idempotencyHeader;
     }
-    return this.orderingService.createStaffOrder(dto, staffId, role);
+    const staffId = user?.sub || headerStaffId;
+    const role = user?.role || headerRole;
+    return user
+      ? this.orderingService.createStaffOrder(dto, staffId, role, user)
+      : this.orderingService.createStaffOrder(dto, staffId, role);
   }
 
   @Get('track')
@@ -80,37 +94,65 @@ export class OrderingController {
   }
 
   @Get()
-  async getOrders(@Query() query: GetOrdersDto) {
-    return this.orderingService.getOrders(query);
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'KITCHEN_STAFF')
+  @UseGuards(RolesGuard)
+  async getOrders(
+    @Query() query: GetOrdersDto,
+    @CurrentUser() user?: RequestUser,
+  ) {
+    return user
+      ? this.orderingService.getOrders(query, user)
+      : this.orderingService.getOrders(query);
   }
 
   @Patch(':id/status')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'CASHIER', 'KITCHEN_STAFF')
+  @UseGuards(RolesGuard)
   async updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
-    @Headers('x-user-role') changedBy?: string,
+    @Headers('x-user-role') headerChangedBy?: string,
+    @CurrentUser() user?: RequestUser,
   ) {
-    return this.orderingService.updateOrderStatus(
-      id,
-      dto.status,
-      dto.reason,
-      changedBy || 'STAFF',
-    );
+    const changedBy =
+      user?.role ||
+      (typeof headerChangedBy === 'string' && headerChangedBy) ||
+      'STAFF';
+    return user
+      ? this.orderingService.updateOrderStatus(
+          id,
+          dto.status,
+          dto.reason,
+          changedBy,
+          user,
+        )
+      : this.orderingService.updateOrderStatus(
+          id,
+          dto.status,
+          dto.reason,
+          changedBy,
+        );
   }
 
   @Patch(':id/payment')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'CASHIER')
+  @UseGuards(RolesGuard)
   async updatePayment(
     @Param('id') id: string,
     @Body() dto: UpdatePaymentStatusDto,
+    @CurrentUser() user?: RequestUser,
   ) {
-    return this.orderingService.updatePaymentStatus(id, dto.paymentStatus);
+    return user
+      ? this.orderingService.updatePaymentStatus(id, dto.paymentStatus, user)
+      : this.orderingService.updatePaymentStatus(id, dto.paymentStatus);
   }
 
   @Post(':code/cancel')
-  async cancelOrder(
-    @Param('code') code: string,
-    @Body() dto: CancelOrderDto,
-  ) {
-    return this.orderingService.cancelOrderByCustomer(code, dto.token, dto.reason);
+  async cancelOrder(@Param('code') code: string, @Body() dto: CancelOrderDto) {
+    return this.orderingService.cancelOrderByCustomer(
+      code,
+      dto.token,
+      dto.reason,
+    );
   }
 }

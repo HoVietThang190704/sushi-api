@@ -13,8 +13,7 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { JwtAuthGuard } from './jwt-auth.guard';
-import { CurrentUser } from './current-user.decorator';
+import { JwtAuthGuard, CurrentUser } from '@common';
 
 @Controller('auth')
 export class AuthController {
@@ -63,8 +62,9 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const bearerToken = request.headers.authorization?.replace('Bearer ', '');
+    const cookies = request.cookies as Record<string, string> | undefined;
     const refreshToken =
-      request.cookies?.['refresh_token'] || bodyToken || bearerToken;
+      cookies?.['refresh_token'] || bodyToken || bearerToken || '';
 
     const result = await this.authService.refreshToken(refreshToken);
 
@@ -83,7 +83,8 @@ export class AuthController {
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const refreshToken = request.cookies?.['refresh_token'];
+    const cookies = request.cookies as Record<string, string> | undefined;
+    const refreshToken = cookies?.['refresh_token'];
     await this.authService.revokeToken(refreshToken);
 
     response.clearCookie('access_token');

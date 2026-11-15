@@ -14,7 +14,7 @@ describe('RabbitMQService', () => {
     close: jest.Mock;
   };
   let mockConnection: {
-    createChannel: jest.Mock;
+    createConfirmChannel: jest.Mock;
     on: jest.Mock;
     close: jest.Mock;
   };
@@ -37,13 +37,24 @@ describe('RabbitMQService', () => {
 
     mockChannel = {
       assertExchange: jest.fn().mockResolvedValue(undefined),
-      publish: jest.fn().mockReturnValue(true),
+      publish: jest.fn(
+        (
+          _exchange: string,
+          _routingKey: string,
+          _content: Buffer,
+          _options: unknown,
+          cb?: (err: Error | null) => void,
+        ) => {
+          cb?.(null);
+          return true;
+        },
+      ),
       on: jest.fn(),
       close: jest.fn().mockResolvedValue(undefined),
     };
 
     mockConnection = {
-      createChannel: jest.fn().mockResolvedValue(mockChannel),
+      createConfirmChannel: jest.fn().mockResolvedValue(mockChannel),
       on: jest.fn(),
       close: jest.fn().mockResolvedValue(undefined),
     };
@@ -58,11 +69,11 @@ describe('RabbitMQService', () => {
   });
 
   describe('connect & initialization', () => {
-    it('should connect to RabbitMQ and assert topic exchange', async () => {
+    it('should connect to RabbitMQ confirm channel and assert topic exchange', async () => {
       await service.onModuleInit();
 
       expect(amqp.connect).toHaveBeenCalled();
-      expect(mockConnection.createChannel).toHaveBeenCalled();
+      expect(mockConnection.createConfirmChannel).toHaveBeenCalled();
       expect(mockChannel.assertExchange).toHaveBeenCalledWith(
         REALTIME_EXCHANGE,
         'topic',
@@ -80,7 +91,7 @@ describe('RabbitMQService', () => {
   });
 
   describe('publishEvent', () => {
-    it('should publish message successfully when channel is ready', async () => {
+    it('should publish message and return true when broker confirms (ACK)', async () => {
       await service.connect();
 
       const result = await service.publishEvent(sampleEvent);
@@ -94,7 +105,44 @@ describe('RabbitMQService', () => {
           persistent: true,
           contentType: 'application/json',
         },
+        expect.any(Function),
       );
+    });
+
+    it('should return false when broker NACKs the published message', async () => {
+      await service.connect();
+      mockChannel.publish.mockImplementationOnce(
+        (
+          _exchange: string,
+          _routingKey: string,
+          _content: Buffer,
+          _options: unknown,
+          cb?: (err: Error | null) => void,
+        ) => {
+          cb?.(new Error('Broker NACK'));
+          return true;
+        },
+      );
+
+      const result = await service.publishEvent(sampleEvent);
+
+      expect(result).toBe(false);
+    });
+
+    it('should return false and invalidate channel when broker confirm times out', async () => {
+      await service.connect();
+      mockChannel.publish.mockImplementationOnce(() => {
+        // Never invokes confirm callback
+        return true;
+      });
+
+      const result = await service.publishEvent(sampleEvent, undefined, 25);
+
+      expect(result).toBe(false);
+
+      // Next publish should trigger reconnect since channel was invalidated
+      await service.publishEvent(sampleEvent);
+      expect(mockConnection.createConfirmChannel).toHaveBeenCalledTimes(2);
     });
 
     it('should support custom routingKey override', async () => {
@@ -111,6 +159,7 @@ describe('RabbitMQService', () => {
         'custom.routing.key',
         expect.any(Buffer),
         expect.any(Object),
+        expect.any(Function),
       );
     });
 

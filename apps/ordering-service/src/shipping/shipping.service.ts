@@ -2,8 +2,10 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import type { RequestUser } from '@common';
 import {
   CreateShippingRuleDto,
   UpdateShippingRuleDto,
@@ -47,12 +49,31 @@ export class ShippingService {
     });
   }
 
-  // 2. Lấy danh sách quy tắc phí ship (Dành cho Admin)
-  async getShippingRules(district?: string, branchId?: string) {
+  // 2. Lấy danh sách quy tắc phí ship (Dành cho Admin / Quản lý / Thu ngân theo chi nhánh)
+  async getShippingRules(
+    district?: string,
+    branchId?: string,
+    user?: RequestUser,
+  ) {
+    let effectiveBranchId = branchId;
+    if (user && user.role !== 'SUPER_ADMIN') {
+      if (!user.branchId) {
+        throw new ForbiddenException(
+          'Tài khoản nhân viên chưa được gán chi nhánh hoạt động!',
+        );
+      }
+      if (branchId && branchId !== user.branchId) {
+        throw new ForbiddenException(
+          'Bạn chỉ có quyền xem quy tắc giao hàng của chi nhánh được phân công!',
+        );
+      }
+      effectiveBranchId = user.branchId;
+    }
+
     return this.prisma.shippingRule.findMany({
       where: {
         ...(district ? { district } : {}),
-        ...(branchId ? { branchId } : {}),
+        ...(effectiveBranchId ? { branchId: effectiveBranchId } : {}),
       },
       include: {
         branch: {
@@ -144,11 +165,14 @@ export class ShippingService {
   async calculateShipping(dto: CalculateShippingDto) {
     const { district, ward, branchId } = dto;
     const cleanWard = ward.trim();
+    if (!cleanWard || (district !== undefined && !district.trim())) {
+      throw new BadRequestException('Địa chỉ giao hàng không hợp lệ');
+    }
 
     // Điều kiện tìm kiếm theo tên phường (hỗ trợ cả case-insensitive và biến thể tên)
-    const wardConditions: Array<{ ward: { equals: string; mode: 'insensitive' } }> = [
-      { ward: { equals: cleanWard, mode: 'insensitive' } },
-    ];
+    const wardConditions: Array<{
+      ward: { equals: string; mode: 'insensitive' };
+    }> = [{ ward: { equals: cleanWard, mode: 'insensitive' } }];
 
     const wardDef = this.vietnamAddressService.findWardByName(cleanWard);
     if (wardDef && wardDef.name.toLowerCase() !== cleanWard.toLowerCase()) {
@@ -156,11 +180,29 @@ export class ShippingService {
         ward: { equals: wardDef.name, mode: 'insensitive' },
       });
     }
+    const districtFilter = district
+      ? { district: { equals: district.trim(), mode: 'insensitive' as const } }
+      : {};
+
+    if (!district) {
+      const matching = await this.prisma.shippingRule.findMany({
+        where: { OR: wardConditions, isActive: true },
+        select: { district: true },
+      });
+      if (
+        new Set(matching.map((rule) => rule.district.toLowerCase())).size > 1
+      ) {
+        throw new BadRequestException(
+          'Vui lòng cung cấp quận/huyện để xác định phí giao hàng',
+        );
+      }
+    }
 
     if (branchId) {
       const specificRule = await this.prisma.shippingRule.findFirst({
         where: {
           OR: wardConditions,
+          ...districtFilter,
           branchId,
           isActive: true,
         },
@@ -179,14 +221,16 @@ export class ShippingService {
           branch: specificRule.branch,
         };
       }
-      // Nếu branchId truyền lên không hỗ trợ phường này (ví dụ do đổi phường khác),
-      // tự động fallback về chi nhánh mặc định của phường để không làm gián đoạn đặt hàng.
+      throw new BadRequestException(
+        'Chi nhánh đã chọn không hỗ trợ khu vực giao hàng này',
+      );
     }
 
     // Nếu không truyền branchId, ưu tiên lấy chi nhánh mặc định
     const defaultRule = await this.prisma.shippingRule.findFirst({
       where: {
         OR: wardConditions,
+        ...districtFilter,
         isDefault: true,
         isActive: true,
       },
@@ -210,6 +254,7 @@ export class ShippingService {
     const anyRule = await this.prisma.shippingRule.findFirst({
       where: {
         OR: wardConditions,
+        ...districtFilter,
         isActive: true,
       },
       include: {

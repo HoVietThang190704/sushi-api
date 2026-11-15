@@ -6,14 +6,16 @@ import {
   ValidateNested,
   IsInt,
   Min,
-  IsUUID,
   IsEmail,
   Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class OrderItemDto {
-  @IsUUID()
+  @IsString()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, {
+    message: 'productId must be a valid UUID',
+  })
   @IsNotEmpty()
   productId!: string;
 
@@ -35,21 +37,24 @@ export class CreateOrderDto {
   @IsEmail()
   customerEmail?: string;
 
-  @IsOptional()
   @IsString()
-  address?: string;
+  @IsNotEmpty()
+  @Matches(/\S/)
+  address!: string;
 
   @IsOptional()
   @IsString()
   province?: string;
 
-  @IsOptional()
   @IsString()
-  district?: string;
+  @IsNotEmpty()
+  @Matches(/\S/)
+  district!: string;
 
-  @IsOptional()
   @IsString()
-  ward?: string;
+  @IsNotEmpty()
+  @Matches(/\S/)
+  ward!: string;
 
   @IsOptional()
   @IsString()

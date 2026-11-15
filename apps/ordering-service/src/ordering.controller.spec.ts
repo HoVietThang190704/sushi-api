@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { OrderingController } from './ordering.controller';
 import { OrderingService } from './ordering.service';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { RolesGuard } from '@common';
 
 describe('OrderingController', () => {
   let controller: OrderingController;
@@ -28,7 +29,10 @@ describe('OrderingController', () => {
           },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<OrderingController>(OrderingController);
     service = module.get<OrderingService>(OrderingService);
@@ -50,12 +54,20 @@ describe('OrderingController', () => {
 
   it('should call service.trackOrder with code and token', async () => {
     await controller.trackOrder('ORD-1', 'tok-1');
-    expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', 'tok-1', undefined);
+    expect(service.trackOrder).toHaveBeenCalledWith(
+      'ORD-1',
+      'tok-1',
+      undefined,
+    );
   });
 
   it('should call service.trackOrder with code and phone', async () => {
     await controller.trackOrder('ORD-1', undefined, '0901234567');
-    expect(service.trackOrder).toHaveBeenCalledWith('ORD-1', undefined, '0901234567');
+    expect(service.trackOrder).toHaveBeenCalledWith(
+      'ORD-1',
+      undefined,
+      '0901234567',
+    );
   });
 
   it('should call service.getOrders with query dto including date range', async () => {
@@ -85,13 +97,25 @@ describe('OrderingController', () => {
   });
 
   it('should call service.updatePaymentStatus with id and payment status', async () => {
-    await controller.updatePayment('uuid-1', { paymentStatus: PaymentStatus.PAID });
-    expect(service.updatePaymentStatus).toHaveBeenCalledWith('uuid-1', PaymentStatus.PAID);
+    await controller.updatePayment('uuid-1', {
+      paymentStatus: PaymentStatus.PAID,
+    });
+    expect(service.updatePaymentStatus).toHaveBeenCalledWith(
+      'uuid-1',
+      PaymentStatus.PAID,
+    );
   });
 
   it('should call service.cancelOrderByCustomer with code and token', async () => {
-    await controller.cancelOrder('ORD-1', { token: 'tok-1', reason: 'change mind' });
-    expect(service.cancelOrderByCustomer).toHaveBeenCalledWith('ORD-1', 'tok-1', 'change mind');
+    await controller.cancelOrder('ORD-1', {
+      token: 'tok-1',
+      reason: 'change mind',
+    });
+    expect(service.cancelOrderByCustomer).toHaveBeenCalledWith(
+      'ORD-1',
+      'tok-1',
+      'change mind',
+    );
   });
 
   it('should call service.getPaymentConfig', async () => {
@@ -126,7 +150,7 @@ describe('OrderingController', () => {
       branchId: '00000000-0000-0000-0000-000000000001',
       items: [{ productId: 'uuid-1', quantity: 1 }],
     };
-    await controller.createStaffOrder(dto as any, 'staff-1', 'STAFF', 'idem-1');
+    await controller.createStaffOrder(dto, 'staff-1', 'STAFF', 'idem-1');
     expect(service.createStaffOrder).toHaveBeenCalledWith(
       expect.objectContaining({ idempotencyKey: 'idem-1' }),
       'staff-1',

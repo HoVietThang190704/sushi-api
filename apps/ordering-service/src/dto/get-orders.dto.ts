@@ -1,4 +1,5 @@
-import { IsOptional, IsEnum, IsUUID, Matches } from 'class-validator';
+import { IsOptional, IsEnum, Matches, IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 
 export class GetOrdersDto {
@@ -27,4 +28,16 @@ export class GetOrdersDto {
     message: 'endDate phải có định dạng YYYY-MM-DD (ví dụ: 2026-11-04)',
   })
   endDate?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'page phải là số nguyên' })
+  @Min(1, { message: 'page phải lớn hơn hoặc bằng 1' })
+  page?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'limit phải là số nguyên' })
+  @Min(1, { message: 'limit phải lớn hơn hoặc bằng 1' })
+  limit?: number;
 }

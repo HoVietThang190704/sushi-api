@@ -6,9 +6,11 @@ import { AppModule } from './app.module';
 import { createProxyMiddleware, fixRequestBody } from 'http-proxy-middleware';
 import cookieParser from 'cookie-parser';
 import { JwtService } from '@nestjs/jwt';
+import type { ClientRequest } from 'node:http';
 import type { Express, Request } from 'express';
 import { RateLimitService } from './rate-limit/rate-limit.service';
 import { createRateLimitMiddleware } from './rate-limit/rate-limit.middleware';
+import { isCorsOriginAllowed } from './cors.policy';
 
 interface AuthenticatedRequest extends Request {
   cookies: Record<string, string>;
@@ -30,23 +32,16 @@ async function bootstrap() {
   }
   app.use(createRateLimitMiddleware(app.get(RateLimitService)));
 
-  // 2. Cấu hình CORS: Cho phép localhost và toàn bộ dải IP mạng LAN để test trên điện thoại
+  // 2. Cấu hình CORS an toàn theo môi trường
   app.enableCors({
     origin: (
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) => {
-      if (
-        !origin ||
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        /^http:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(
-          origin,
-        )
-      ) {
+      if (isCorsOriginAllowed(origin)) {
         callback(null, true);
       } else {
-        callback(null, true);
+        callback(null, false);
       }
     },
     credentials: true,
@@ -63,7 +58,7 @@ async function bootstrap() {
     process.env.ORDERING_SERVICE_URL || 'http://localhost:3004';
 
   // Helper to sanitize incoming client headers and inject verified JWT claims
-  const handleProxyAuth = (proxyReq: any, req: any) => {
+  const handleProxyAuth = (proxyReq: ClientRequest, req: Request) => {
     const customReq = req as AuthenticatedRequest;
     fixRequestBody(proxyReq, req);
 
@@ -80,15 +75,20 @@ async function bootstrap() {
     if (token) {
       proxyReq.setHeader('authorization', `Bearer ${token}`);
       try {
-        const payload = jwtService.verify(token, {
+        const payload = jwtService.verify<{
+          sub?: string;
+          role?: string;
+          branchId?: string;
+        }>(token, {
           secret: process.env.JWT_SECRET,
         });
         if (payload?.sub) proxyReq.setHeader('x-user-id', payload.sub);
-        if (payload?.role)
-          proxyReq.setHeader('x-user-role', payload.role);
+        if (payload?.role) proxyReq.setHeader('x-user-role', payload.role);
         if (payload?.branchId)
           proxyReq.setHeader('x-user-branch-id', payload.branchId);
-      } catch {}
+      } catch {
+        // Downstream guard will handle invalid/expired token
+      }
     }
   };
 
@@ -161,4 +161,4 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
   console.log(`API Gateway is running on http://0.0.0.0:${port}`);
 }
-bootstrap();
+void bootstrap();

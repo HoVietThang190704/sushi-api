@@ -2,7 +2,7 @@ export interface BaseResponse<T = unknown> {
   success: boolean;
   statusCode: number;
   message?: string;
-  data?: T;
+  data?: T | null;
   timestamp: string;
 }
 

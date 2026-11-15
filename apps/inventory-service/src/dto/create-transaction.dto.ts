@@ -4,7 +4,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  IsUUID,
+  Matches,
   Min,
 } from 'class-validator';
 import { TransactionType, TransactionReason } from '@prisma/client';
@@ -18,12 +18,12 @@ export class CreateTransactionDto {
   @IsNotEmpty()
   reason: TransactionReason;
 
-  @IsUUID()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
   @IsNotEmpty()
   ingredientId: string;
 
   @IsOptional()
-  @IsUUID()
+  @Matches(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
   warehouseId?: string;
 
   @IsNumber()

@@ -5,6 +5,7 @@ import { ShippingService } from './shipping.service';
 import { VietnamAddressService } from './vietnam-address.service';
 import { PrismaService } from '../prisma.service';
 import { CalculateShippingDto } from './dto/shipping-rule.dto';
+import { BadRequestException } from '@nestjs/common';
 
 describe('ShippingService', () => {
   let service: ShippingService;
@@ -89,6 +90,39 @@ describe('ShippingService', () => {
   });
 
   describe('calculateShipping', () => {
+    it('uses district alongside ward and accepts a configured zero fee', async () => {
+      prismaMock.shippingRule.findFirst.mockResolvedValueOnce({
+        district: 'Quận 3',
+        ward: 'Phường 1',
+        fee: 0,
+        branch: mockBranchQ1,
+      });
+      const result = await service.calculateShipping({
+        district: 'Quận 3',
+        ward: 'Phường 1',
+        branchId: mockBranchQ1.id,
+      });
+      expect(result.fee).toBe(0);
+      expect(prismaMock.shippingRule.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            district: expect.objectContaining({ equals: 'Quận 3' }),
+            branchId: mockBranchQ1.id,
+          }),
+        }),
+      );
+    });
+
+    it('rejects an explicitly selected branch without a matching rule', async () => {
+      prismaMock.shippingRule.findFirst.mockResolvedValue(null);
+      await expect(
+        service.calculateShipping({
+          district: 'Quận 3',
+          ward: 'Phường 1',
+          branchId: mockBranchBT.id,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
     it('should calculate shipping with specific branchId matching a rule', async () => {
       prismaMock.shippingRule.findFirst.mockResolvedValueOnce({
         district: 'Quận 3',
@@ -108,10 +142,8 @@ describe('ShippingService', () => {
       expect(result.branch.code).toBe('HANBI-Q1');
     });
 
-    it('should fallback to default rule if specified branchId does not deliver to ward', async () => {
-      // First call (with specific branchId) returns null
+    it('does not silently switch away from a requested branch', async () => {
       prismaMock.shippingRule.findFirst.mockResolvedValueOnce(null);
-      // Fallback call (defaultRule) returns rule with default branch
       prismaMock.shippingRule.findFirst.mockResolvedValueOnce({
         district: 'Quận 3',
         ward: 'Phường 1',
@@ -119,15 +151,92 @@ describe('ShippingService', () => {
         branch: mockBranchQ1,
       });
 
-      const result = await service.calculateShipping({
-        ward: 'Phường 1',
-        district: 'Quận 3',
-        branchId: mockBranchBT.id, // BT does not deliver to Phường 1, fallback to Q1
-      });
+      await expect(
+        service.calculateShipping({
+          ward: 'Phường 1',
+          district: 'Quận 3',
+          branchId: mockBranchBT.id,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prismaMock.shippingRule.findFirst).toHaveBeenCalledTimes(1);
+    });
+  });
 
-      expect(result).toBeDefined();
-      expect(result.branch.code).toBe('HANBI-Q1');
-      expect(result.fee).toBe(22000);
+  describe('getShippingRules branch isolation', () => {
+    const managerUser = {
+      sub: 'manager-1',
+      email: 'manager@hanbisushi.vn',
+      role: 'BRANCH_MANAGER',
+      branchId: mockBranchQ1.id,
+    };
+
+    const cashierUser = {
+      sub: 'cashier-1',
+      email: 'cashier@hanbisushi.vn',
+      role: 'CASHIER',
+      branchId: mockBranchQ1.id,
+    };
+
+    const superAdminUser = {
+      sub: 'admin-1',
+      email: 'admin@hanbisushi.vn',
+      role: 'SUPER_ADMIN',
+      branchId: null,
+    };
+
+    it('should scope getShippingRules to user.branchId for BRANCH_MANAGER and CASHIER when branchId is omitted', async () => {
+      await service.getShippingRules('Quận 3', undefined, managerUser);
+      expect(prismaMock.shippingRule.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { district: 'Quận 3', branchId: mockBranchQ1.id },
+        }),
+      );
+
+      prismaMock.shippingRule.findMany.mockClear();
+      await service.getShippingRules(undefined, undefined, cashierUser);
+      expect(prismaMock.shippingRule.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { branchId: mockBranchQ1.id },
+        }),
+      );
+    });
+
+    it('should reject cross-branch getShippingRules for non-SUPER_ADMIN and missing branchId', async () => {
+      await expect(
+        service.getShippingRules(undefined, mockBranchBT.id, managerUser),
+      ).rejects.toThrow(
+        'Bạn chỉ có quyền xem quy tắc giao hàng của chi nhánh được phân công!',
+      );
+
+      await expect(
+        service.getShippingRules(undefined, undefined, {
+          ...cashierUser,
+          branchId: null,
+        }),
+      ).rejects.toThrow(
+        'Tài khoản nhân viên chưa được gán chi nhánh hoạt động!',
+      );
+    });
+
+    it('should allow SUPER_ADMIN to view all branches or filter any branchId', async () => {
+      await service.getShippingRules(undefined, undefined, superAdminUser);
+      expect(prismaMock.shippingRule.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {},
+        }),
+      );
+
+      prismaMock.shippingRule.findMany.mockClear();
+      await service.getShippingRules(
+        undefined,
+        mockBranchBT.id,
+        superAdminUser,
+      );
+      expect(prismaMock.shippingRule.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { branchId: mockBranchBT.id },
+        }),
+      );
     });
   });
 });

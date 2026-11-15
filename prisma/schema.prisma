@@ -246,10 +246,14 @@ model OutboxEvent {
   status        OutboxStatus @default(PENDING)
   retryCount    Int          @default(0) @map("retry_count")
   lastError     String?      @map("last_error") @db.Text
+  claimedBy     String?      @map("claimed_by") @db.VarChar(100)
+  claimedUntil  DateTime?    @map("claimed_until")
+  nextAttemptAt DateTime?    @map("next_attempt_at")
   createdAt     DateTime     @default(now()) @map("created_at")
   publishedAt   DateTime?    @map("published_at")
 
   @@index([status, createdAt])
+  @@index([status, nextAttemptAt, createdAt])
   @@map("outbox_events")
   @@schema("inventory")
 }
@@ -358,8 +362,9 @@ model Order {
   totalAmount      Decimal       @map("total_amount") @db.Decimal(18, 2)
   paymentQrUrl     String?       @map("payment_qr_url") @db.Text
   paymentBankInfo  String?       @map("payment_bank_info") @db.Text
-  idempotencyKey   String?       @unique @map("idempotency_key") @db.VarChar(100)
-  accessTokenHash  String        @map("access_token_hash") @db.VarChar(64)
+  idempotencyKey         String?       @unique @map("idempotency_key") @db.VarChar(100)
+  idempotencyFingerprint String?       @map("idempotency_fingerprint") @db.VarChar(64)
+  accessTokenHash        String        @map("access_token_hash") @db.VarChar(64)
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
 

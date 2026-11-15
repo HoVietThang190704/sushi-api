@@ -1,16 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CatalogServiceController } from './catalog-service.controller';
 import { CatalogServiceService } from './catalog-service.service';
-import { CloudinaryService } from '@common';
+import { CloudinaryService, RolesGuard } from '@common';
 import { RabbitMQService } from '@common/rabbitmq';
 import { PrismaService } from './prisma.service';
 import { CatalogCacheService } from './catalog-cache.service';
-
-jest.mock('./guards/roles.guard', () => ({
-  RolesGuard: jest.fn().mockImplementation(() => ({
-    canActivate: () => true,
-  })),
-}));
 
 describe('CatalogServiceController', () => {
   let controller: CatalogServiceController;
@@ -59,7 +53,10 @@ describe('CatalogServiceController', () => {
           },
         },
       ],
-    }).compile();
+    })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = app.get<CatalogServiceController>(CatalogServiceController);
     service = app.get<CatalogServiceService>(CatalogServiceService);

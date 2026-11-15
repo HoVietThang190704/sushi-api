@@ -7,6 +7,7 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ShippingService } from './shipping.service';
 import {
@@ -14,6 +15,8 @@ import {
   UpdateShippingRuleDto,
   CalculateShippingDto,
 } from './dto/shipping-rule.dto';
+import { RolesGuard, Roles, CurrentUser } from '@common';
+import type { RequestUser } from '@common';
 
 @Controller('shipping')
 export class ShippingController {
@@ -35,19 +38,26 @@ export class ShippingController {
   }
 
   @Get('rules')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER', 'CASHIER')
+  @UseGuards(RolesGuard)
   async getShippingRules(
     @Query('district') district?: string,
     @Query('branchId') branchId?: string,
+    @CurrentUser() user?: RequestUser,
   ) {
-    return this.shippingService.getShippingRules(district, branchId);
+    return this.shippingService.getShippingRules(district, branchId, user);
   }
 
   @Post('rules')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
   async createShippingRule(@Body() dto: CreateShippingRuleDto) {
     return this.shippingService.upsertShippingRule(dto);
   }
 
   @Patch('rules/:id')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
   async updateShippingRule(
     @Param('id') id: string,
     @Body() dto: UpdateShippingRuleDto,
@@ -56,6 +66,8 @@ export class ShippingController {
   }
 
   @Delete('rules/:id')
+  @Roles('SUPER_ADMIN')
+  @UseGuards(RolesGuard)
   async deleteShippingRule(@Param('id') id: string) {
     return this.shippingService.deleteShippingRule(id);
   }

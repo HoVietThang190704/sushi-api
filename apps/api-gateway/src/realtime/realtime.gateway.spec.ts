@@ -162,9 +162,12 @@ describe('RealtimeGateway', () => {
 
       await gateway.handleConnection(mockClient);
 
-      expect(jwtService.verifyAsync).toHaveBeenCalledWith('explicit-guest-token', {
-        secret: expect.any(String),
-      });
+      expect(jwtService.verifyAsync).toHaveBeenCalledWith(
+        'explicit-guest-token',
+        {
+          secret: expect.any(String),
+        },
+      );
       expect(mockClient.join).toHaveBeenCalledWith('order:ORD-EXPLICIT-1');
       expect(mockClient.join).not.toHaveBeenCalledWith('authenticated');
     });
@@ -191,14 +194,21 @@ describe('RealtimeGateway', () => {
 
       await gateway.handleConnection(mockClient);
 
-      expect(jwtService.verifyAsync).toHaveBeenCalledWith('guest-tracking-jwt', {
-        secret: expect.any(String),
-      });
+      expect(jwtService.verifyAsync).toHaveBeenCalledWith(
+        'guest-tracking-jwt',
+        {
+          secret: expect.any(String),
+        },
+      );
       expect(mockClient.data.user).toEqual(guestPayload);
       expect(mockClient.join).toHaveBeenCalledWith('order:ORD-ABCXYZ');
       expect(mockClient.join).not.toHaveBeenCalledWith('authenticated');
-      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringContaining('branch:'));
-      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringContaining('role:'));
+      expect(mockClient.join).not.toHaveBeenCalledWith(
+        expect.stringContaining('branch:'),
+      );
+      expect(mockClient.join).not.toHaveBeenCalledWith(
+        expect.stringContaining('role:'),
+      );
       expect(mockClient.disconnect).not.toHaveBeenCalled();
     });
 
@@ -218,9 +228,15 @@ describe('RealtimeGateway', () => {
 
       expect(mockClient.disconnect).not.toHaveBeenCalled();
       expect(jwtService.verifyAsync).not.toHaveBeenCalled();
-      expect(mockClient.join).toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
-      expect(mockClient.join).not.toHaveBeenCalledWith(REALTIME_ROOMS.AUTHENTICATED);
-      expect(mockClient.join).not.toHaveBeenCalledWith(expect.stringMatching(/^(role:|branch:|order:)/));
+      expect(mockClient.join).toHaveBeenCalledWith(
+        REALTIME_ROOMS.PUBLIC_STORE_CONFIG,
+      );
+      expect(mockClient.join).not.toHaveBeenCalledWith(
+        REALTIME_ROOMS.AUTHENTICATED,
+      );
+      expect(mockClient.join).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^(role:|branch:|order:)/),
+      );
     });
 
     it('should disconnect client with invalid token even if auth.isPublic is present', async () => {
@@ -343,7 +359,9 @@ describe('RealtimeGateway', () => {
         paymentStatus: undefined,
         timestamp: '2026-11-05T10:00:00.000Z',
       });
-      expect(mockServer.to).not.toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+      expect(mockServer.to).not.toHaveBeenCalledWith(
+        REALTIME_ROOMS.PUBLIC_STORE_CONFIG,
+      );
     });
 
     it('should emit store-config:updated to public store config room and not leak order details', () => {
@@ -362,7 +380,9 @@ describe('RealtimeGateway', () => {
 
       gateway.broadcastRealtimeEvent(event);
 
-      expect(mockServer.to).toHaveBeenCalledWith(REALTIME_ROOMS.PUBLIC_STORE_CONFIG);
+      expect(mockServer.to).toHaveBeenCalledWith(
+        REALTIME_ROOMS.PUBLIC_STORE_CONFIG,
+      );
       expect(mockServer.emit).toHaveBeenCalledWith('store-config:updated', {
         timestamp: '2026-11-14T12:00:00.000Z',
       });

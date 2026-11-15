@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { io as ClientSocket, Socket as ClientSocketType } from 'socket.io-client';
+import {
+  io as ClientSocket,
+  Socket as ClientSocketType,
+} from 'socket.io-client';
 import { RealtimeGateway } from './realtime.gateway';
 import { RealtimeDomainEvent } from '@contracts';
+import * as http from 'node:http';
+import type { IncomingMessage } from 'node:http';
 
 describe('RealtimeGateway (Real Socket.IO Integration)', () => {
   let app: INestApplication;
@@ -37,6 +42,172 @@ describe('RealtimeGateway (Real Socket.IO Integration)', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  describe('WebSocket handshake Origin policy', () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalCorsAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS;
+
+    afterEach(() => {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+      if (originalCorsAllowedOrigins === undefined) {
+        delete process.env.CORS_ALLOWED_ORIGINS;
+      } else {
+        process.env.CORS_ALLOWED_ORIGINS = originalCorsAllowedOrigins;
+      }
+    });
+
+    const rawWebsocketUpgradeWithOrigin = (origin?: string) =>
+      new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+        const req = http.request({
+          hostname: '127.0.0.1',
+          port,
+          path: '/socket.io/?EIO=4&transport=websocket',
+          method: 'GET',
+          headers: {
+            Connection: 'Upgrade',
+            Upgrade: 'websocket',
+            'Sec-WebSocket-Version': '13',
+            'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+            ...(origin ? { Origin: origin } : {}),
+          },
+        });
+        req.on('upgrade', (res, socket) => {
+          socket.destroy();
+          resolve({ statusCode: res.statusCode ?? 101, body: '' });
+        });
+        req.on('response', (res) => {
+          let body = '';
+          res.on('data', (chunk) => {
+            body += String(chunk);
+          });
+          res.on('end', () => {
+            resolve({ statusCode: res.statusCode ?? 0, body });
+          });
+        });
+        req.on('error', reject);
+        req.end();
+      });
+
+    const httpPollingWithOrigin = (origin?: string) =>
+      new Promise<{ statusCode: number; allowOrigin?: string }>(
+        (resolve, reject) => {
+          const req = http.request({
+            hostname: '127.0.0.1',
+            port,
+            path: '/socket.io/?EIO=4&transport=polling',
+            method: 'GET',
+            headers: origin ? { Origin: origin } : undefined,
+          });
+          req.on('response', (res) => {
+            res.resume();
+            const allowOriginHeader =
+              res.headers['access-control-allow-origin'];
+            resolve({
+              statusCode: res.statusCode ?? 0,
+              allowOrigin: Array.isArray(allowOriginHeader)
+                ? allowOriginHeader[0]
+                : allowOriginHeader,
+            });
+          });
+          req.on('error', reject);
+          req.end();
+        },
+      );
+
+    it('should invoke allowRequest and reject disallowed origin on real WebSocket upgrade and HTTP polling', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CORS_ALLOWED_ORIGINS = 'https://hanbisushi.vn';
+
+      const namespaceServer = gateway.server as unknown as {
+        server?: {
+          engine?: {
+            on: (
+              event: string,
+              listener: (err: {
+                code: number;
+                message: string;
+                context?: { message?: string };
+              }) => void,
+            ) => void;
+            off: (event: string, listener: (...args: any[]) => void) => void;
+            opts?: {
+              allowRequest?: (
+                req: IncomingMessage,
+                fn: (err: string | null, success: boolean) => void,
+              ) => void;
+            };
+          };
+        };
+      };
+
+      const engine = namespaceServer.server?.engine;
+      expect(typeof engine?.opts?.allowRequest).toBe('function');
+
+      const connectionErrors: Array<{
+        code: number;
+        message: string;
+        context?: { message?: string };
+      }> = [];
+      const onConnectionError = (err: {
+        code: number;
+        message: string;
+        context?: { message?: string };
+      }) => {
+        connectionErrors.push(err);
+      };
+      engine?.on('connection_error', onConnectionError);
+
+      try {
+        const result = await rawWebsocketUpgradeWithOrigin(
+          'https://evil-attacker.example',
+        );
+        expect(result.statusCode).not.toBe(101);
+        expect(result.body).toBe('Origin not allowed by WebSocket policy');
+        expect(connectionErrors).toContainEqual(
+          expect.objectContaining({
+            code: 4, // Engine.IO Server.errors.FORBIDDEN
+            context: { message: 'Origin not allowed by WebSocket policy' },
+          }),
+        );
+
+        const pollingDisallowed = await httpPollingWithOrigin(
+          'https://evil-attacker.example',
+        );
+        expect(pollingDisallowed.allowOrigin).toBeUndefined();
+        expect(pollingDisallowed.statusCode).toBe(403);
+
+        const pollingAllowed = await httpPollingWithOrigin(
+          'https://hanbisushi.vn',
+        );
+        expect(pollingAllowed.statusCode).toBe(200);
+        expect(pollingAllowed.allowOrigin).toBe('https://hanbisushi.vn');
+      } finally {
+        engine?.off('connection_error', onConnectionError);
+      }
+    });
+
+    it('should allow WebSocket handshake from allowlisted origin in production', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CORS_ALLOWED_ORIGINS = 'https://hanbisushi.vn';
+
+      const result = await rawWebsocketUpgradeWithOrigin(
+        'https://hanbisushi.vn',
+      );
+      expect(result).toEqual({ statusCode: 101, body: '' });
+    });
+
+    it('should allow WebSocket handshake when Origin header is absent (non-browser client)', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.CORS_ALLOWED_ORIGINS = 'https://hanbisushi.vn';
+
+      const result = await rawWebsocketUpgradeWithOrigin(undefined);
+      expect(result).toEqual({ statusCode: 101, body: '' });
+    });
   });
 
   it('should allow anonymous client to connect and receive ONLY store-config:updated (no leaks)', (done) => {

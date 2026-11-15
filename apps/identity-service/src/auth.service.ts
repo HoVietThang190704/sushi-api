@@ -2,11 +2,12 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
-  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -18,6 +19,22 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
   ) {}
+
+  private hashRefreshToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async isRefreshTokenMatch(
+    rawToken: string,
+    storedHash: string,
+    precomputedSha256?: string,
+  ): Promise<boolean> {
+    if (storedHash.startsWith('$2')) {
+      return bcrypt.compare(rawToken, storedHash);
+    }
+    const sha256 = precomputedSha256 ?? this.hashRefreshToken(rawToken);
+    return storedHash === sha256;
+  }
 
   async register(dto: RegisterDto) {
     const existingUser = await this.prisma.user.findUnique({
@@ -90,6 +107,7 @@ export class AuthService {
     email: string,
     role: string,
     branchId: string | null,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
   ) {
     const payload = {
       sub: userId,
@@ -107,17 +125,20 @@ export class AuthService {
         secret: jwtSecret,
         expiresIn: '15m',
       }),
-      this.jwtService.signAsync(payload, {
-        secret: jwtRefreshSecret,
-        expiresIn: '7d',
-      }),
+      this.jwtService.signAsync(
+        { jti: randomUUID(), ...payload },
+        {
+          secret: jwtRefreshSecret,
+          expiresIn: '7d',
+        },
+      ),
     ]);
 
-    const tokenHash = await bcrypt.hash(refreshToken, 10);
+    const tokenHash = this.hashRefreshToken(refreshToken);
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
-    await this.prisma.refreshToken.create({
+    await db.refreshToken.create({
       data: {
         tokenHash,
         userId,
@@ -175,9 +196,14 @@ export class AuthService {
       orderBy: { createdAt: 'desc' },
     });
 
+    const incomingHash = this.hashRefreshToken(rawRefreshToken);
     let matchedTokenRecord: (typeof userTokens)[number] | null = null;
     for (const record of userTokens) {
-      const isMatch = await bcrypt.compare(rawRefreshToken, record.tokenHash);
+      const isMatch = await this.isRefreshTokenMatch(
+        rawRefreshToken,
+        record.tokenHash,
+        incomingHash,
+      );
       if (isMatch) {
         matchedTokenRecord = record;
         break;
@@ -189,10 +215,6 @@ export class AuthService {
     }
 
     if (matchedTokenRecord.revokedAt) {
-      await this.prisma.refreshToken.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
       throw new UnauthorizedException('Refresh token has been revoked');
     }
 
@@ -200,18 +222,27 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token has expired');
     }
 
-    await this.prisma.refreshToken.update({
-      where: { id: matchedTokenRecord.id },
-      data: { revokedAt: new Date() },
-    });
-
     const user = await this.getProfile(userId);
-    const newTokens = await this.generateTokens(
-      user.id,
-      user.email,
-      user.role,
-      user.branchId,
-    );
+    const newTokens = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: {
+          id: matchedTokenRecord.id,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        data: { revokedAt: new Date() },
+      });
+      if (claimed.count !== 1) {
+        throw new UnauthorizedException('Refresh token already used');
+      }
+      return this.generateTokens(
+        user.id,
+        user.email,
+        user.role,
+        user.branchId,
+        tx,
+      );
+    });
 
     return {
       user,
@@ -225,7 +256,7 @@ export class AuthService {
     try {
       const jwtRefreshSecret =
         this.configService.get<string>('JWT_REFRESH_SECRET');
-      const payload = this.jwtService.verify(rawRefreshToken, {
+      const payload = this.jwtService.verify<{ sub: string }>(rawRefreshToken, {
         secret: jwtRefreshSecret,
       });
 
@@ -233,8 +264,15 @@ export class AuthService {
         where: { userId: payload.sub, revokedAt: null },
       });
 
+      const incomingHash = this.hashRefreshToken(rawRefreshToken);
       for (const record of userTokens) {
-        if (await bcrypt.compare(rawRefreshToken, record.tokenHash)) {
+        if (
+          await this.isRefreshTokenMatch(
+            rawRefreshToken,
+            record.tokenHash,
+            incomingHash,
+          )
+        ) {
           await this.prisma.refreshToken.update({
             where: { id: record.id },
             data: { revokedAt: new Date() },
@@ -242,6 +280,8 @@ export class AuthService {
           break;
         }
       }
-    } catch {}
+    } catch {
+      // Ignore invalid or expired token during logout
+    }
   }
 }
