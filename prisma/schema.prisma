@@ -31,12 +31,32 @@ model User {
   role         UserRole       @default(CUSTOMER)
   branchId     String?        @map("branch_id") @db.Uuid
   isActive     Boolean        @default(true) @map("is_active")
+  phone              String?   @db.VarChar(30)
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  tokenVersion       Int       @default(0) @map("token_version")
+  lastLoginAt        DateTime? @map("last_login_at")
   createdAt    DateTime       @default(now()) @map("created_at")
   updatedAt    DateTime       @updatedAt @map("updated_at")
 
   refreshTokens RefreshToken[]
 
+  @@index([branchId, role])
   @@map("users")
+  @@schema("identity")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String   @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(60)
+  targetUserId String?  @map("target_user_id") @db.Uuid
+  before       Json?
+  after        Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([targetUserId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
   @@schema("identity")
 }
 

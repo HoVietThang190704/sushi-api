@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -10,6 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import { ROLES_KEY } from './roles.decorator';
 import type { RequestUser } from './current-user.decorator';
+import { SessionStateService } from './session-state.service';
 
 interface RequestWithAuth extends Request {
   cookies: Record<string, string>;
@@ -21,6 +23,7 @@ export class RolesGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly jwtService: JwtService,
+    @Optional() private readonly sessionState?: SessionStateService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -58,14 +61,21 @@ export class RolesGuard implements CanActivate {
         );
       }
 
+      let payload: RequestUser;
       try {
-        const payload = await this.jwtService.verifyAsync<RequestUser>(token, {
+        payload = await this.jwtService.verifyAsync<RequestUser>(token, {
           secret,
         });
-        request.user = payload;
       } catch {
         throw new UnauthorizedException('Invalid or expired access token');
       }
+      if (
+        this.sessionState &&
+        (await this.sessionState.isStale(payload.sub, payload.tv ?? 0))
+      ) {
+        throw new UnauthorizedException('Session has been revoked');
+      }
+      request.user = payload;
     }
 
     const user = request.user;

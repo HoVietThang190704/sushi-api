@@ -2,7 +2,10 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
+  Optional,
 } from '@nestjs/common';
+import { SessionStateService } from '@common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -18,6 +21,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    @Optional() private readonly sessionState?: SessionStateService,
   ) {}
 
   private hashRefreshToken(token: string): string {
@@ -88,7 +92,13 @@ export class AuthService {
       user.email,
       user.role,
       user.branchId,
+      this.prisma,
+      user.tokenVersion ?? 0,
     );
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
 
     return {
       user: {
@@ -97,6 +107,7 @@ export class AuthService {
         fullName: user.fullName,
         role: user.role,
         branchId: user.branchId,
+        mustChangePassword: user.mustChangePassword ?? false,
       },
       tokens,
     };
@@ -108,12 +119,14 @@ export class AuthService {
     role: string,
     branchId: string | null,
     db: Prisma.TransactionClient | PrismaService = this.prisma,
+    tokenVersion = 0,
   ) {
     const payload = {
       sub: userId,
       email,
       role,
       branchId: branchId || null,
+      tv: tokenVersion,
     };
 
     const jwtSecret = this.configService.get<string>('JWT_SECRET');
@@ -155,9 +168,12 @@ export class AuthService {
         id: true,
         email: true,
         fullName: true,
+        phone: true,
         role: true,
         branchId: true,
         isActive: true,
+        mustChangePassword: true,
+        tokenVersion: true,
         createdAt: true,
       },
     });
@@ -166,6 +182,74 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
     return user;
+  }
+
+  /** Public-safe profile (never exposes tokenVersion). */
+  async getPublicProfile(userId: string) {
+    const { tokenVersion, ...profile } = await this.getProfile(userId);
+    void tokenVersion;
+    return profile;
+  }
+
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    if (!newPassword || newPassword.length < 8) {
+      throw new BadRequestException('Mật khẩu mới phải có ít nhất 8 ký tự');
+    }
+    if (newPassword === currentPassword) {
+      throw new BadRequestException('Mật khẩu mới phải khác mật khẩu cũ');
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) {
+      throw new UnauthorizedException('Mật khẩu hiện tại không đúng');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+          tokenVersion: { increment: 1 },
+        },
+      });
+      await tx.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      const tokens = await this.generateTokens(
+        updated.id,
+        updated.email,
+        updated.role,
+        updated.branchId,
+        tx,
+        updated.tokenVersion,
+      );
+      return {
+        tokenVersion: updated.tokenVersion,
+        user: {
+          id: updated.id,
+          email: updated.email,
+          fullName: updated.fullName,
+          role: updated.role,
+          branchId: updated.branchId,
+          mustChangePassword: false,
+        },
+        tokens,
+      };
+    });
+    await this.sessionState?.publish(userId, result.tokenVersion);
+    const { tokenVersion, ...response } = result;
+    void tokenVersion;
+    return response;
   }
 
   async refreshToken(rawRefreshToken: string) {
@@ -178,6 +262,7 @@ export class AuthService {
       email: string;
       role: string;
       branchId?: string | null;
+      tv?: number;
     };
     try {
       const jwtRefreshSecret =
@@ -223,6 +308,9 @@ export class AuthService {
     }
 
     const user = await this.getProfile(userId);
+    if ((payload.tv ?? 0) !== (user.tokenVersion ?? 0)) {
+      throw new UnauthorizedException('Session is no longer valid');
+    }
     const newTokens = await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.refreshToken.updateMany({
         where: {
@@ -241,11 +329,14 @@ export class AuthService {
         user.role,
         user.branchId,
         tx,
+        user.tokenVersion ?? 0,
       );
     });
 
+    const { tokenVersion, ...publicUser } = user;
+    void tokenVersion;
     return {
-      user,
+      user: publicUser,
       tokens: newTokens,
     };
   }

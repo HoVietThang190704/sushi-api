@@ -13,6 +13,7 @@ import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './staff/dto/staff.dto';
 import { JwtAuthGuard, CurrentUser } from '@common';
 
 @Controller('auth')
@@ -51,7 +52,28 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   async getMe(@CurrentUser('sub') userId: string) {
-    return this.authService.getProfile(userId);
+    return this.authService.getPublicProfile(userId);
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const result = await this.authService.changePassword(
+      userId,
+      dto.currentPassword,
+      dto.newPassword,
+    );
+    this.setTokenCookies(
+      response,
+      result.tokens.accessToken,
+      result.tokens.refreshToken,
+    );
+    return result;
   }
 
   @Post('refresh')

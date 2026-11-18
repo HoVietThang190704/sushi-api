@@ -143,6 +143,43 @@ describe('AuthService refresh rotation', () => {
     );
   });
 
+  it('embeds the token version in issued tokens', async () => {
+    const tokens = await service.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.branchId,
+      prisma,
+      4,
+    );
+    const claims = jwt.verify<{ tv: number }>(tokens.refreshToken, { secret });
+    expect(claims.tv).toBe(4);
+  });
+
+  it('rejects refresh once the user token version has been bumped', async () => {
+    const { refreshToken } = await issue();
+    const bumped = { ...user, tokenVersion: 1 };
+    prisma.user.findUnique.mockResolvedValue(bumped);
+    await expect(service.refreshToken(refreshToken)).rejects.toThrow(
+      'Session is no longer valid',
+    );
+    expect(records[0].revokedAt).toBeNull();
+  });
+
+  it('does not expose tokenVersion in refresh response', async () => {
+    const { refreshToken } = await issue();
+    const result = await service.refreshToken(refreshToken);
+    expect(result.user).not.toHaveProperty('tokenVersion');
+  });
+
+  it('rejects refresh for deactivated users', async () => {
+    const { refreshToken } = await issue();
+    prisma.user.findUnique.mockResolvedValue({ ...user, isActive: false });
+    await expect(service.refreshToken(refreshToken)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
   it('rejects revoked and expired refresh records', async () => {
     const { refreshToken } = await issue();
     records[0].expiresAt = new Date(0);

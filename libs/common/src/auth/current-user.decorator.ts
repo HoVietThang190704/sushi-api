@@ -7,6 +7,8 @@ export interface RequestUser {
   email: string;
   role: string;
   branchId?: string | null;
+  /** Token version; bumped server-side to invalidate outstanding tokens. */
+  tv?: number;
 }
 
 export interface AuthenticatedRequest extends Request {

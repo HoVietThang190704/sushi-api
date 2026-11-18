@@ -105,6 +105,19 @@ async function bootstrap() {
     }),
   );
 
+  // 3b. Reverse Proxy: /api/staff/* -> http://localhost:3001/staff/*
+  app.use(
+    '/api/staff',
+    createProxyMiddleware({
+      target: identityServiceUrl,
+      changeOrigin: true,
+      pathRewrite: (path) => `/staff${path}`,
+      on: {
+        proxyReq: handleProxyAuth,
+      },
+    }),
+  );
+
   // 4. Reverse Proxy: /api/catalog/* -> http://localhost:3002/catalog/*
   app.use(
     '/api/catalog',

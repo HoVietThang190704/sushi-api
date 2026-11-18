@@ -2,11 +2,13 @@ import {
   Injectable,
   CanActivate,
   ExecutionContext,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
 import type { RequestUser } from './current-user.decorator';
+import { SessionStateService } from './session-state.service';
 
 interface RequestWithAuth extends Request {
   cookies: Record<string, string>;
@@ -15,7 +17,10 @@ interface RequestWithAuth extends Request {
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly jwtService: JwtService) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    @Optional() private readonly sessionState?: SessionStateService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithAuth>();
@@ -38,14 +43,22 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('JWT_SECRET is not configured on server');
     }
 
+    let payload: RequestUser;
     try {
-      const payload = await this.jwtService.verifyAsync<RequestUser>(token, {
+      payload = await this.jwtService.verifyAsync<RequestUser>(token, {
         secret,
       });
-      request.user = payload;
-      return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
     }
+
+    if (
+      this.sessionState &&
+      (await this.sessionState.isStale(payload.sub, payload.tv ?? 0))
+    ) {
+      throw new UnauthorizedException('Session has been revoked');
+    }
+    request.user = payload;
+    return true;
   }
 }
