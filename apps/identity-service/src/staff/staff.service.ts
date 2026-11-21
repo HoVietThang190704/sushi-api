@@ -56,16 +56,16 @@ export class StaffService {
     actor: RequestUser,
     action: string,
     targetUserId: string,
-    before: unknown,
-    after: unknown,
+    before: Prisma.InputJsonValue | null,
+    after: Prisma.InputJsonValue | null,
   ) {
     await tx.auditLog.create({
       data: {
         actorId: actor.sub,
         action,
         targetUserId,
-        before: (before ?? undefined) as Prisma.InputJsonValue | undefined,
-        after: (after ?? undefined) as Prisma.InputJsonValue | undefined,
+        before: before ?? undefined,
+        after: after ?? undefined,
       },
     });
   }

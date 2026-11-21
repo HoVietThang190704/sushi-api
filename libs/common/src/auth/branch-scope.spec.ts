@@ -17,9 +17,7 @@ describe('resolveBranchScope', () => {
   });
 
   it('rejects other roles requesting a different branch', () => {
-    expect(() => resolveBranchScope(manager, 'b2')).toThrow(
-      ForbiddenException,
-    );
+    expect(() => resolveBranchScope(manager, 'b2')).toThrow(ForbiddenException);
   });
 
   it('rejects non-admin without an assigned branch', () => {

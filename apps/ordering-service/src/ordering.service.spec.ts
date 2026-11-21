@@ -109,6 +109,7 @@ describe('OrderingService - createOrder', () => {
       key: 'DEFAULT',
       customerOrderingEnabled: true,
       contactPhone: '0988888888',
+      heroBanners: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -1533,6 +1534,71 @@ describe('OrderingService - createOrder', () => {
           payload: {},
         }),
       );
+    });
+
+    it('should normalize and persist custom heroBanners when super admin updates banners', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+        heroBanners: null,
+      };
+      jest
+        .spyOn(prisma.storeConfig, 'findUnique')
+        .mockResolvedValue(existingConfig as any);
+      const updateSpy = jest
+        .spyOn(prisma.storeConfig, 'update')
+        .mockResolvedValue({
+          ...existingConfig,
+          heroBanners: [
+            {
+              id: 'slide-1',
+              imageUrl:
+                'https://res.cloudinary.com/demo/image/upload/banner1.webp',
+              leadTitle: 'Ưu đãi đặc biệt',
+              highlightTitle: 'Sashimi Cá Hồi Na Uy',
+              description: 'Giảm 15% cho đơn đặt trực tuyến',
+              kanjiWatermark: '新鮮 極上 刺身',
+              isActive: true,
+            },
+          ],
+        } as any);
+
+      const result = await service.updateStoreConfig(
+        {
+          heroBanners: [
+            {
+              id: ' slide-1 ',
+              imageUrl: ' https://res.cloudinary.com/demo/image/upload/banner1.webp ',
+              leadTitle: ' Ưu đãi đặc biệt ',
+              highlightTitle: ' Sashimi Cá Hồi Na Uy ',
+              description: ' Giảm 15% cho đơn đặt trực tuyến ',
+              kanjiWatermark: ' 新鮮 極上 刺身 ',
+              isActive: true,
+            },
+          ],
+        },
+        'SUPER_ADMIN',
+      );
+
+      expect(updateSpy).toHaveBeenCalledWith({
+        where: { id: 'cfg-1' },
+        data: {
+          heroBanners: [
+            {
+              id: 'slide-1',
+              imageUrl: 'https://res.cloudinary.com/demo/image/upload/banner1.webp',
+              leadTitle: 'Ưu đãi đặc biệt',
+              highlightTitle: 'Sashimi Cá Hồi Na Uy',
+              description: 'Giảm 15% cho đơn đặt trực tuyến',
+              kanjiWatermark: '新鮮 極上 刺身',
+              isActive: true,
+            },
+          ],
+        },
+      });
+      expect(result.heroBanners).toHaveLength(1);
     });
 
     it('should return updated config and not throw when rabbitmq publish fails', async () => {

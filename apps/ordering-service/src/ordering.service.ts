@@ -1668,6 +1668,19 @@ export class OrderingService {
       );
     }
 
+    const normalizedHeroBanners: Prisma.InputJsonValue | undefined =
+      dto.heroBanners !== undefined
+        ? dto.heroBanners.map((item) => ({
+            id: item.id.trim(),
+            imageUrl: item.imageUrl.trim(),
+            leadTitle: item.leadTitle?.trim() || '',
+            highlightTitle: item.highlightTitle?.trim() || '',
+            description: item.description?.trim() || '',
+            kanjiWatermark: item.kanjiWatermark?.trim() || '',
+            isActive: item.isActive ?? true,
+          }))
+        : undefined;
+
     const updated = await this.prisma.storeConfig.update({
       where: { id: existing.id },
       data: {
@@ -1676,6 +1689,9 @@ export class OrderingService {
         }),
         ...(dto.contactPhone !== undefined && {
           contactPhone: dto.contactPhone.trim(),
+        }),
+        ...(normalizedHeroBanners !== undefined && {
+          heroBanners: normalizedHeroBanners,
         }),
       },
     });

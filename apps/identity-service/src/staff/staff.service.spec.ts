@@ -135,7 +135,9 @@ describe('StaffService', () => {
       await service.list(admin, { branchId: 'b2' });
       const where = prisma.user.findMany.mock.calls[0][0].where;
       expect(where.branchId).toBe('b2');
-      expect(where.role).toEqual({ in: expect.not.arrayContaining(['CUSTOMER']) });
+      expect(where.role).toEqual({
+        in: expect.not.arrayContaining(['CUSTOMER']),
+      });
     });
   });
 

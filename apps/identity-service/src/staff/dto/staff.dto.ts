@@ -80,7 +80,7 @@ export class ListStaffQueryDto {
   role?: string;
 
   @IsOptional()
-  @Transform(({ value }) =>
+  @Transform(({ value }: { value: unknown }) =>
     value === 'true' ? true : value === 'false' ? false : value,
   )
   @IsBoolean()

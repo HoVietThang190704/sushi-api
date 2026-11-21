@@ -7,13 +7,16 @@ import { ShippingController } from './shipping/shipping.controller';
 import { VietnamAddressService } from './shipping/vietnam-address.service';
 import { RabbitMQModule, RabbitMQService } from '@common/rabbitmq';
 import { AuthModule, OutboxDispatcherService } from '@common';
+import { ReportsController } from './reports/reports.controller';
+import { ReportsService } from './reports/reports.service';
 
 @Module({
   imports: [AuthModule, RabbitMQModule],
-  controllers: [OrderingController, ShippingController],
+  controllers: [ReportsController, OrderingController, ShippingController],
   providers: [
     PrismaService,
     OrderingService,
+    ReportsService,
     ShippingService,
     VietnamAddressService,
     {

@@ -447,6 +447,7 @@ model StoreConfig {
   key                     String   @unique @default("DEFAULT") @db.VarChar(50)
   customerOrderingEnabled Boolean  @default(true) @map("customer_ordering_enabled")
   contactPhone            String   @default("0988888888") @map("contact_phone") @db.VarChar(30)
+  heroBanners             Json?    @map("hero_banners")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 

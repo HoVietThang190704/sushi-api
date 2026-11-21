@@ -62,9 +62,9 @@ describe('staff policy', () => {
       expect(() => resolveAssignment(manager, 'SUPER_ADMIN', null)).toThrow(
         ForbiddenException,
       );
-      expect(() =>
-        resolveAssignment(manager, 'BRANCH_MANAGER', 'b1'),
-      ).toThrow(ForbiddenException);
+      expect(() => resolveAssignment(manager, 'BRANCH_MANAGER', 'b1')).toThrow(
+        ForbiddenException,
+      );
     });
 
     it('rejects unknown roles', () => {
