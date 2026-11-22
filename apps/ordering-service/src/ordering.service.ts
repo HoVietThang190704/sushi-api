@@ -1681,6 +1681,84 @@ export class OrderingService {
           }))
         : undefined;
 
+    const normalizedCuratedCategories: Prisma.InputJsonValue | undefined =
+      dto.curatedCategories !== undefined
+        ? dto.curatedCategories.map((item) => ({
+            id: item.id.trim(),
+            title: item.title.trim(),
+            japanese: item.japanese?.trim() || '',
+            desc: item.desc?.trim() || '',
+            imageUrl: item.imageUrl.trim(),
+            targetCategory: item.targetCategory?.trim() || '',
+            isActive: item.isActive ?? true,
+          }))
+        : undefined;
+
+    const normalizedCulinaryNews: Prisma.InputJsonValue | undefined =
+      dto.culinaryNews !== undefined
+        ? dto.culinaryNews.map((item) => ({
+            id: item.id.trim(),
+            title: item.title.trim(),
+            date: item.date?.trim() || '',
+            tag: item.tag?.trim() || '',
+            imageUrl: item.imageUrl.trim(),
+            summary: item.summary?.trim() || '',
+            isActive: item.isActive ?? true,
+          }))
+        : undefined;
+
+    const normalizedBrandStory: Prisma.InputJsonValue | undefined =
+      dto.brandStory !== undefined
+        ? {
+            cardBadge: dto.brandStory.cardBadge?.trim() || '',
+            cardTitle: dto.brandStory.cardTitle?.trim() || '',
+            cardQuote: dto.brandStory.cardQuote?.trim() || '',
+            cardSignature: dto.brandStory.cardSignature?.trim() || '',
+            cardKanji: dto.brandStory.cardKanji?.trim() || '',
+            storyLabel: dto.brandStory.storyLabel?.trim() || '',
+            storyHeading: dto.brandStory.storyHeading?.trim() || '',
+            storyParagraph1: dto.brandStory.storyParagraph1?.trim() || '',
+            storyParagraph2: dto.brandStory.storyParagraph2?.trim() || '',
+            pillars: Array.isArray(dto.brandStory.pillars)
+              ? dto.brandStory.pillars.map((p) => ({
+                  title: p.title?.trim() || '',
+                  description: p.description?.trim() || '',
+                }))
+              : [],
+            craftTiles: Array.isArray(dto.brandStory.craftTiles)
+              ? dto.brandStory.craftTiles.map((t) => ({
+                  imageUrl: t.imageUrl?.trim() || '',
+                  caption: t.caption?.trim() || '',
+                }))
+              : [],
+          }
+        : undefined;
+
+    const normalizedFooterConfig: Prisma.InputJsonValue | undefined =
+      dto.footerConfig !== undefined
+        ? {
+            patternPreset: dto.footerConfig.patternPreset?.trim() || 'seigaiha',
+            customBgImageUrl: dto.footerConfig.customBgImageUrl?.trim() || '',
+            bgColor: dto.footerConfig.bgColor?.trim() || '#0b0e14',
+            overlayOpacity:
+              typeof dto.footerConfig.overlayOpacity === 'number'
+                ? Math.min(100, Math.max(0, dto.footerConfig.overlayOpacity))
+                : 80,
+            patternOpacity:
+              typeof dto.footerConfig.patternOpacity === 'number'
+                ? Math.min(100, Math.max(5, dto.footerConfig.patternOpacity))
+                : 20,
+            brandDescription:
+              dto.footerConfig.brandDescription?.trim() || '',
+            openingDays: dto.footerConfig.openingDays?.trim() || '',
+            openingHours: dto.footerConfig.openingHours?.trim() || '',
+            closingNote: dto.footerConfig.closingNote?.trim() || '',
+            addressNote: dto.footerConfig.addressNote?.trim() || '',
+            copyrightText: dto.footerConfig.copyrightText?.trim() || '',
+          }
+        : undefined;
+
+    // Touch file to trigger nest watch reload after Prisma client DMMF regeneration
     const updated = await this.prisma.storeConfig.update({
       where: { id: existing.id },
       data: {
@@ -1693,7 +1771,19 @@ export class OrderingService {
         ...(normalizedHeroBanners !== undefined && {
           heroBanners: normalizedHeroBanners,
         }),
-      },
+        ...(normalizedBrandStory !== undefined && {
+          brandStory: normalizedBrandStory,
+        }),
+        ...(normalizedCuratedCategories !== undefined && {
+          curatedCategories: normalizedCuratedCategories,
+        }),
+        ...(normalizedCulinaryNews !== undefined && {
+          culinaryNews: normalizedCulinaryNews,
+        }),
+        ...(normalizedFooterConfig !== undefined && {
+          footerConfig: normalizedFooterConfig,
+        }),
+      } as Prisma.StoreConfigUpdateInput,
     });
 
     try {

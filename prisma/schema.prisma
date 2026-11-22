@@ -448,6 +448,10 @@ model StoreConfig {
   customerOrderingEnabled Boolean  @default(true) @map("customer_ordering_enabled")
   contactPhone            String   @default("0988888888") @map("contact_phone") @db.VarChar(30)
   heroBanners             Json?    @map("hero_banners")
+  brandStory              Json?    @map("brand_story")
+  curatedCategories       Json?    @map("curated_categories")
+  culinaryNews            Json?    @map("culinary_news")
+  footerConfig            Json?    @map("footer_config")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 

@@ -110,9 +110,12 @@ describe('OrderingService - createOrder', () => {
       customerOrderingEnabled: true,
       contactPhone: '0988888888',
       heroBanners: null,
+      brandStory: null,
+      curatedCategories: null,
+      culinaryNews: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    });
+    } as any);
   });
 
   it('should throw BadRequestException if items array is empty', async () => {
@@ -1599,6 +1602,179 @@ describe('OrderingService - createOrder', () => {
         },
       });
       expect(result.heroBanners).toHaveLength(1);
+    });
+
+    it('should normalize and persist curatedCategories and culinaryNews when super admin updates homepage sections', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+        heroBanners: null,
+        curatedCategories: null,
+        culinaryNews: null,
+      };
+      jest
+        .spyOn(prisma.storeConfig, 'findUnique')
+        .mockResolvedValue(existingConfig as any);
+      const updateSpy = jest
+        .spyOn(prisma.storeConfig, 'update')
+        .mockResolvedValue({
+          ...existingConfig,
+          curatedCategories: [
+            {
+              id: 'sashimi',
+              title: 'SASHIMI',
+              japanese: '刺身',
+              desc: 'Hải sản tươi sống',
+              imageUrl: 'https://res.cloudinary.com/demo/image/upload/cat1.webp',
+              targetCategory: 'sashimi',
+              isActive: true,
+            },
+          ],
+          culinaryNews: [
+            {
+              id: 'news-1',
+              title: 'Ưu đãi mùa thu',
+              date: '21.11.2026',
+              tag: 'Khuyến mãi',
+              imageUrl: 'https://res.cloudinary.com/demo/image/upload/news1.webp',
+              summary: 'Giảm 20% tất cả combo',
+              isActive: true,
+            },
+          ],
+        } as any);
+
+      const result = await service.updateStoreConfig(
+        {
+          curatedCategories: [
+            {
+              id: ' sashimi ',
+              title: ' SASHIMI ',
+              japanese: ' 刺身 ',
+              desc: ' Hải sản tươi sống ',
+              imageUrl: ' https://res.cloudinary.com/demo/image/upload/cat1.webp ',
+              targetCategory: ' sashimi ',
+              isActive: true,
+            },
+          ],
+          culinaryNews: [
+            {
+              id: ' news-1 ',
+              title: ' Ưu đãi mùa thu ',
+              date: ' 21.11.2026 ',
+              tag: ' Khuyến mãi ',
+              imageUrl: ' https://res.cloudinary.com/demo/image/upload/news1.webp ',
+              summary: ' Giảm 20% tất cả combo ',
+              isActive: true,
+            },
+          ],
+        },
+        'SUPER_ADMIN',
+      );
+
+      expect(updateSpy).toHaveBeenCalledWith({
+        where: { id: 'cfg-1' },
+        data: {
+          curatedCategories: [
+            {
+              id: 'sashimi',
+              title: 'SASHIMI',
+              japanese: '刺身',
+              desc: 'Hải sản tươi sống',
+              imageUrl: 'https://res.cloudinary.com/demo/image/upload/cat1.webp',
+              targetCategory: 'sashimi',
+              isActive: true,
+            },
+          ],
+          culinaryNews: [
+            {
+              id: 'news-1',
+              title: 'Ưu đãi mùa thu',
+              date: '21.11.2026',
+              tag: 'Khuyến mãi',
+              imageUrl: 'https://res.cloudinary.com/demo/image/upload/news1.webp',
+              summary: 'Giảm 20% tất cả combo',
+              isActive: true,
+            },
+          ],
+        },
+      });
+      expect((result as any).curatedCategories).toHaveLength(1);
+      expect((result as any).culinaryNews).toHaveLength(1);
+    });
+
+    it('should normalize and persist footerConfig with Japanese pattern preset when super admin updates footer', async () => {
+      const existingConfig = {
+        id: 'cfg-1',
+        key: 'DEFAULT',
+        customerOrderingEnabled: true,
+        contactPhone: '0988888888',
+        heroBanners: null,
+        curatedCategories: null,
+        culinaryNews: null,
+        footerConfig: null,
+      };
+      jest
+        .spyOn(prisma.storeConfig, 'findUnique')
+        .mockResolvedValue(existingConfig as any);
+      const updateSpy = jest
+        .spyOn(prisma.storeConfig, 'update')
+        .mockResolvedValue({
+          ...existingConfig,
+          footerConfig: {
+            patternPreset: 'asanoha',
+            customBgImageUrl: '',
+            bgColor: '#0f141c',
+            overlayOpacity: 85,
+            patternOpacity: 25,
+            brandDescription: 'Sushi chuẩn vị Nhật Bản',
+            openingDays: 'Thứ Hai - Chủ Nhật',
+            openingHours: '10:00 - 22:00 hàng ngày',
+            closingNote: '(Nhận đơn giao hàng đến 21:30)',
+            addressNote: 'Giao hàng tận nơi TP.HCM',
+            copyrightText: '© 2026 HANBI SUSHI Platform. All rights reserved.',
+          },
+        } as any);
+
+      const result = await service.updateStoreConfig(
+        {
+          footerConfig: {
+            patternPreset: ' asanoha ',
+            customBgImageUrl: ' ',
+            bgColor: ' #0f141c ',
+            overlayOpacity: 85,
+            patternOpacity: 25,
+            brandDescription: ' Sushi chuẩn vị Nhật Bản ',
+            openingDays: ' Thứ Hai - Chủ Nhật ',
+            openingHours: ' 10:00 - 22:00 hàng ngày ',
+            closingNote: ' (Nhận đơn giao hàng đến 21:30) ',
+            addressNote: ' Giao hàng tận nơi TP.HCM ',
+            copyrightText: ' © 2026 HANBI SUSHI Platform. All rights reserved. ',
+          },
+        },
+        'SUPER_ADMIN',
+      );
+
+      expect(updateSpy).toHaveBeenCalledWith({
+        where: { id: 'cfg-1' },
+        data: {
+          footerConfig: {
+            patternPreset: 'asanoha',
+            customBgImageUrl: '',
+            bgColor: '#0f141c',
+            overlayOpacity: 85,
+            patternOpacity: 25,
+            brandDescription: 'Sushi chuẩn vị Nhật Bản',
+            openingDays: 'Thứ Hai - Chủ Nhật',
+            openingHours: '10:00 - 22:00 hàng ngày',
+            closingNote: '(Nhận đơn giao hàng đến 21:30)',
+            addressNote: 'Giao hàng tận nơi TP.HCM',
+            copyrightText: '© 2026 HANBI SUSHI Platform. All rights reserved.',
+          },
+        },
+      });
+      expect((result as any).footerConfig.patternPreset).toBe('asanoha');
     });
 
     it('should return updated config and not throw when rabbitmq publish fails', async () => {
