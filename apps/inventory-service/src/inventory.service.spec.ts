@@ -660,15 +660,12 @@ describe('InventoryService', () => {
   });
 
   describe('Recipe (BOM) management', () => {
-    it('should throw BadRequestException if product is not found or is a COMBO', async () => {
-      (prisma.product.findUnique as jest.Mock).mockResolvedValue({
-        id: 'prod-combo',
-        type: 'COMBO',
-      });
+    it('should throw BadRequestException if product is not found', async () => {
+      (prisma.product.findUnique as jest.Mock).mockResolvedValue(null);
 
       await expect(
         service.upsertRecipe({
-          productId: 'prod-combo',
+          productId: 'prod-missing',
           items: [{ ingredientId: 'ing-1', quantity: 100 }],
         }),
       ).rejects.toThrow(BadRequestException);

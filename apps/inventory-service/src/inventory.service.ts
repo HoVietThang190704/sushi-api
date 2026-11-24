@@ -1054,12 +1054,6 @@ export class InventoryService {
       );
     }
 
-    if (product.type === 'COMBO') {
-      throw new BadRequestException(
-        `Không thể tạo công thức trực tiếp cho sản phẩm COMBO ("${product.name || product.id}"). Công thức được tự động suy diễn từ các món đơn thành phần!`,
-      );
-    }
-
     // Verify all ingredients exist
     const ingredientIds = dto.items.map((i) => i.ingredientId);
     const existingIngredients = await this.prisma.ingredient.findMany({
