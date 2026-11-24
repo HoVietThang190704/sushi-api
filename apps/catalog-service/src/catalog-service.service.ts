@@ -6,6 +6,7 @@ import {
 import { PrismaService } from './prisma.service';
 import {
   CreateCategoryDto,
+  ReorderCategoriesDto,
   UpdateCategoryDto,
 } from './dto/create-category.dto';
 import { CreateProductDto, UpdateProductDto } from './dto/create-product.dto';
@@ -47,6 +48,7 @@ export class CatalogServiceService {
     const category = await this.prisma.productCategory.create({
       data: {
         name: dto.name,
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         parentId: dto.parentId,
       },
       include: {
@@ -80,7 +82,7 @@ export class CatalogServiceService {
             select: { products: true },
           },
         },
-        orderBy: { name: 'asc' },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       }),
     );
   }
@@ -136,6 +138,7 @@ export class CatalogServiceService {
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(dto.parentId !== undefined ? { parentId: dto.parentId } : {}),
       },
       include: {
@@ -165,6 +168,39 @@ export class CatalogServiceService {
     );
 
     return updated;
+  }
+
+  async reorderCategories(dto: ReorderCategoriesDto) {
+    if (!dto.items || dto.items.length === 0) {
+      return this.getCategories();
+    }
+
+    await this.prisma.$transaction(
+      dto.items.map((item) =>
+        this.prisma.productCategory.update({
+          where: { id: item.id },
+          data: { sortOrder: item.sortOrder },
+        }),
+      ),
+    );
+
+    await Promise.all([
+      this.cache.invalidateCategories(),
+      this.cache.invalidateProducts(),
+    ]);
+
+    await this.rabbitmqService.publishEvent(
+      createRealtimeEvent({
+        type: 'catalog.category.updated',
+        resource: 'catalog',
+        action: 'UPDATED',
+        payload: {
+          reorderedCount: dto.items.length,
+        },
+      }),
+    );
+
+    return this.getCategories();
   }
 
   async deleteCategory(id: string) {
@@ -208,13 +244,14 @@ export class CatalogServiceService {
 
   // 2. Quản lý Sản phẩm (Products)
   async createProduct(dto: CreateProductDto) {
+    const cleanSku = dto.sku.trim();
     const existingProduct = await this.prisma.product.findUnique({
-      where: { sku: dto.sku.toUpperCase() },
+      where: { sku: cleanSku },
     });
 
     if (existingProduct) {
       throw new ConflictException(
-        `Product with SKU '${dto.sku}' already exists`,
+        `Product with SKU '${cleanSku}' already exists`,
       );
     }
 
@@ -238,7 +275,7 @@ export class CatalogServiceService {
 
     const product = await this.prisma.product.create({
       data: {
-        sku: dto.sku.toUpperCase(),
+        sku: cleanSku,
         slug: finalSlug,
         barcode: dto.barcode,
         name: dto.name,
@@ -246,6 +283,8 @@ export class CatalogServiceService {
         categoryId: dto.categoryId,
         sellingPrice: new Prisma.Decimal(dto.sellingPrice),
         imageUrl: dto.imageUrl,
+        description: dto.description?.trim() || null,
+        accompaniments: dto.accompaniments?.trim() || null,
       },
       include: {
         category: true,
@@ -284,7 +323,10 @@ export class CatalogServiceService {
         include: {
           category: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [
+          { category: { sortOrder: 'asc' } },
+          { createdAt: 'desc' },
+        ],
       }),
     );
   }
@@ -297,13 +339,13 @@ export class CatalogServiceService {
       throw new NotFoundException('Product not found');
     }
 
-    if (dto.sku && dto.sku.toUpperCase() !== existing.sku) {
+    if (dto.sku && dto.sku.trim() !== existing.sku) {
       const skuConflict = await this.prisma.product.findUnique({
-        where: { sku: dto.sku.toUpperCase() },
+        where: { sku: dto.sku.trim() },
       });
       if (skuConflict && skuConflict.id !== id) {
         throw new ConflictException(
-          `Product with SKU '${dto.sku}' already exists`,
+          `Product with SKU '${dto.sku.trim()}' already exists`,
         );
       }
     }
@@ -320,7 +362,7 @@ export class CatalogServiceService {
     const updated = await this.prisma.product.update({
       where: { id },
       data: {
-        ...(dto.sku !== undefined ? { sku: dto.sku.toUpperCase().trim() } : {}),
+        ...(dto.sku !== undefined ? { sku: dto.sku.trim() } : {}),
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.barcode !== undefined ? { barcode: dto.barcode || null } : {}),
         ...(dto.type !== undefined ? { type: dto.type } : {}),
@@ -332,6 +374,12 @@ export class CatalogServiceService {
           : {}),
         ...(dto.imageUrl !== undefined
           ? { imageUrl: dto.imageUrl || null }
+          : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description?.trim() || null }
+          : {}),
+        ...(dto.accompaniments !== undefined
+          ? { accompaniments: dto.accompaniments?.trim() || null }
           : {}),
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },

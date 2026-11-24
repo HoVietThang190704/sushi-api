@@ -15,6 +15,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CatalogServiceService } from './catalog-service.service';
 import {
   CreateCategoryDto,
+  ReorderCategoriesDto,
   UpdateCategoryDto,
 } from './dto/create-category.dto';
 import { CreateProductDto, UpdateProductDto } from './dto/create-product.dto';
@@ -55,6 +56,13 @@ export class CatalogServiceController {
   @Get('categories')
   async getCategories() {
     return this.catalogService.getCategories();
+  }
+
+  @Patch('categories/reorder')
+  @Roles('SUPER_ADMIN', 'BRANCH_MANAGER')
+  @UseGuards(RolesGuard)
+  async reorderCategories(@Body() dto: ReorderCategoriesDto) {
+    return this.catalogService.reorderCategories(dto);
   }
 
   @Get('categories/:id')

@@ -87,6 +87,7 @@ enum ProductType {
 model ProductCategory {
   id        String            @id @default(uuid()) @db.Uuid
   name      String            @db.VarChar(100)
+  sortOrder Int               @default(0) @map("sort_order")
   parentId  String?           @map("parent_id") @db.Uuid
   parent    ProductCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children  ProductCategory[] @relation("CategoryHierarchy")
@@ -107,6 +108,8 @@ model Product {
   category     ProductCategory? @relation(fields: [categoryId], references: [id])
   sellingPrice Decimal          @map("selling_price") @db.Decimal(18, 2)
   imageUrl     String?          @map("image_url") @db.Text
+  description  String?          @map("description") @db.Text
+  accompaniments String?        @map("accompaniments") @db.VarChar(500)
   isActive     Boolean          @default(true) @map("is_active")
   createdAt    DateTime         @default(now()) @map("created_at")
   updatedAt    DateTime         @updatedAt @map("updated_at")

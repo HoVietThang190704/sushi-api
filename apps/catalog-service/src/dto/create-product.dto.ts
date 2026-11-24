@@ -51,6 +51,16 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000, { message: 'Description cannot exceed 2000 characters' })
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500, { message: 'Accompaniments cannot exceed 500 characters' })
+  accompaniments?: string;
 }
 
 export class UpdateProductDto {
@@ -92,6 +102,16 @@ export class UpdateProductDto {
   @IsOptional()
   @IsString()
   imageUrl?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000, { message: 'Description cannot exceed 2000 characters' })
+  description?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500, { message: 'Accompaniments cannot exceed 500 characters' })
+  accompaniments?: string | null;
 
   @IsOptional()
   @IsBoolean()

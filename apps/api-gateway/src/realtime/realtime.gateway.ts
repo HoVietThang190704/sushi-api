@@ -191,6 +191,16 @@ export class RealtimeGateway
         });
     }
 
+    if (event.resource === 'catalog') {
+      this.server
+        .to(REALTIME_ROOMS.PUBLIC_STORE_CONFIG)
+        .emit('catalog:updated', {
+          type: event.type,
+          action: event.action,
+          timestamp: event.timestamp || new Date().toISOString(),
+        });
+    }
+
     if (event.branchId) {
       this.server
         .to(REALTIME_ROOMS.branch(event.branchId))

@@ -67,6 +67,7 @@ describe('CatalogServiceService', () => {
       const createdCategory = {
         id: 'cat-1',
         name: 'Maki',
+        sortOrder: 0,
         parentId: null,
         parent: null,
       };
